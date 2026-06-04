@@ -12,6 +12,10 @@
   <depend>tf_transformations</depend>
   <depend>geometry_msgs</depend>
   <depend>nav2_simple_commander</depend>
+  <depend>nav2_msgs</depend>
+  <depend>math</depend>
+  <depend>matplotlib</depend>
+  <depend>numpy</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

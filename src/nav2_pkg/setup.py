@@ -29,6 +29,9 @@ setup(
             "command_pub=nav2_pkg.command_pub:main",
             "init=nav2_pkg.initial_pose:main",
             "roam=nav2_pkg.roaming:main",
+            "roam2=nav2_pkg.roaming_2:main",
+            "graph=nav2_pkg.lidar_graph:main",
+
         ],
     },
 )
