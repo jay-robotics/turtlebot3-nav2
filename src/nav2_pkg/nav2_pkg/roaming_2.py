@@ -21,7 +21,6 @@ class Roaming_2(Node):
 
         self.publisher_=self.create_publisher(TwistStamped,"/cmd_vel",10)
         self.odom_subscriber_=self.create_subscription(Odometry,"/odom",self.get_heading,10)
-        self.gap_threshold=1.0
         self.safe_gap_list=[]
         self.motion_selector="MOVING_FORWARD"
         self.selected_gap=None
@@ -29,8 +28,30 @@ class Roaming_2(Node):
         self.heading=0.0
         self.merged=[]
         self.fixed_selected_middle_ray=[]
-
+        self.closest_middle_ray=[]
         
+        self.declare_parameter("gap_threshold",0.7)
+        self.gap_threshold=self.get_parameter("gap_threshold").value
+        
+
+        print("Paramters: window:14 gap_width:14 obstacle:1.0")
+        self.declare_parameter("window",14)
+        self.front_window_width=self.get_parameter("window").value
+
+        self.declare_parameter("gap_width",14)
+        self.gap_width_threshold=self.get_parameter("gap_width").value
+
+        self.declare_parameter("obstacle",1.0)
+        self.obstacle_threshold=self.get_parameter("obstacle").value
+
+        self.declare_parameter("linear_speed",1.0)
+        self.linear_speed=self.get_parameter("linear_speed").value
+        self.stop=0.0
+        self.angular_speed_slow=0.05
+        self.angular_speed_fast=1.0
+        self.error_speed_threshold=3
+        self.error_threshold=0.3
+
 
     def get_heading(self,msg:Odometry):
         # print("odom callback started")
@@ -51,6 +72,9 @@ class Roaming_2(Node):
     
     def publish_scan(self,msg:LaserScan,cmd:TwistStamped):
             # print("laserscan callback started")
+            # print(f"frony window :{self.front_window_width}")
+            # print(f"gap_width_threshold:{self.gap_width_threshold}")
+            # print(f"obstacle threshold :{self.obstacle_threshold}")
 
 
             
@@ -71,49 +95,64 @@ class Roaming_2(Node):
 
             counter=0
             cmd=TwistStamped()
-            self.linear_speed=0.7
-            self.obstacle_threshold=1.0
-            self.stop=0.0
+            # print(f"gap_width_threshold:{self.gap_width_threshold}")
+            # print(f"obstacle threshold :{self.obstacle_threshold}")
+            self.cmd=cmd
+            
+
 
             
 
             if self.motion_selector=="MOVING_FORWARD":
             
 
-                    print("Entered MOVING FORWARED")
+                    print("Moving Forward")
+                    # print(f"Front window width: {self.front_window_width}")
                      # front window
-                    self.front_window=msg.ranges[0:7]+msg.ranges[359:352:-1]
+                    
+                    if self.front_window_width%2==0:
+                        self.rays=(self.front_window_width//2)
+                        # print(f"self.rays {self.rays}")
+                        self.front_window=msg.ranges[0:self.rays]+msg.ranges[359:(359-self.rays):-1]
+                        # print(f"length of front window:{len(self.front_window)}")
+                    elif self.front_window_width%2!=0:
+                         self.rays=self.front_window_width//2
+                        #  print(f"self.rays {self.rays}")
+                         self.front_window=msg.ranges[0:self.rays]+msg.ranges[359: (359-(self.front_window_width-self.rays)) :-1]
+                         
+                    # self.front_window=msg.ranges[0:7]+msg.ranges[359:352:-1]
                     for i in self.front_window:
-                            print("entered for loop")
+                            # print("entered for loop")
                             # print(f"Ray {i}")
                             
                             if (i<self.obstacle_threshold or i==self.obstacle_threshold):
                                 
                                 counter+=1
-                                print(f"counter inside if {counter}")
+                                # print(f"counter inside if {counter}")
                                 if counter==2:
-                                    print("counter=2 | stopping")
-                                    cmd.twist.linear.x=self.stop
-                                    self.publisher_.publish(cmd)
+                                    # print("counter=2 | stopping")
+                                    self.cmd.twist.linear.x=self.stop
+                                    self.publisher_.publish(self.cmd)
+                                    
                                     self.motion_selector="FIND_BEST_GAP"
                                     break
                             elif i>self.obstacle_threshold:
                                     counter=0
                                     
 
-                    print(f"front window: {self.front_window}")
+                    # print(f"front window: {self.front_window}")
 
                     if counter<2:
-                        print(f"counter:{counter} | moving ahead")   
-                        cmd.twist.linear.x=self.linear_speed  
-                        cmd.twist.angular.z=self.stop 
-                        self.publisher_.publish(cmd)
+                        # print(f"counter:{counter} | moving ahead")   
+                        self.cmd.twist.linear.x=self.linear_speed  
+                        self.cmd.twist.angular.z=self.stop 
+                        self.publisher_.publish(self.cmd)
 
 
 
             if self.motion_selector=="FIND_BEST_GAP":
                     
-                    print("Entered FIND_BEST_GAP")
+                    print("Finding best gap")
                 
                     self.gap_list=[]
                     self.safe_gap_list=[]
@@ -142,11 +181,11 @@ class Roaming_2(Node):
 
                             
                     # Front Window , making safe gap list (gaps wider then 14 only)
-                    self.gap_width_threshold=14
+                    
                     for index,gap in enumerate(self.gap_list):   
                         if len(gap)>=self.gap_width_threshold:
                             self.safe_gap_list.append(self.gap_list[index])
-                    print(f"safe_gap_list created {len(self.safe_gap_list)}")
+                    # print(f"safe_gap_list created {len(self.safe_gap_list)}")
 
                     
                     self.merged=[]
@@ -189,10 +228,28 @@ class Roaming_2(Node):
                     self.middle_ray_index=self.width//2
 
                     #middle ray
+                    self.middle_ray_list=[]
+                    for self.gap in self.safe_gap_list:
+                        self.length=len(gap)
+                        print(self.length)
+                        self.middle_index=self.length//2
+                        print(f"middle index:{self.middle_index}")
+                        print(f"{self.gap}")
+                        self.middleRay=self.gap[self.middle_index][0]
+                        print(f"middleRay:{self.middleRay}")
+                        self.middle_ray_list.append(self.middleRay)
+                    
+                    self.least_middle_ray=min(self.middle_ray_list)
+                    
+
                     self.middle_ray=safe_gap[self.middle_ray_index]  
+                    self.len_of_gaps=[len(i) for i in self.gap_list]
+                    self.len_gaps_in_safe_gap_list={len(i) for i in self.safe_gap_list}
+                    print(f"length of gap list:{(len(self.gap_list))} length of gaps in gap list:{self.len_of_gaps} length of safe_gap_list:{len(self.safe_gap_list)} len of gap in safe gap list:{self.len_gaps_in_safe_gap_list}  Length of middle gap list:{len(self.middle_ray_list)} Middle ray list:{self.middle_ray_list} selected ray:{self.least_middle_ray} min middle ray:{self.least_middle_ray}")
                     self.fixed_selected_middle_ray.append(self.middle_ray[0])
-                    print(f"fixed selected middle ray {self.fixed_selected_middle_ray}")
-                    self.target=self. heading+self.middle_ray[0]
+                    # print(f"fixed selected middle ray {self.fixed_selected_middle_ray}")
+                    # self.target=self. heading+self.middle_ray[0]
+                    self.target=self. heading+self.least_middle_ray
                     # print(f"target {self.target}")
                 
                     if self.target>=360:
@@ -201,68 +258,67 @@ class Roaming_2(Node):
                         self.target+=360
 
                     self.target_angle=self.target #normalized 0,360
-                    print("changes to moving")
+                    # print("changes to moving")
                     self.motion_selector="ROTATE"
+                    # self.motion_selector="FIND_BEST_GAP"
 
 
             
-            if self.motion_selector=="ROTATE":
+            # if self.motion_selector=="ROTATE":
                 
-                print("Entered ROTATE")
+            #     print("Rotating")
                 
 
-                # normalize error between -180 to 180
-                self.error=self.target_angle-self.heading
-                if self.error>180:
-                    self.error-=360
-                elif self.error<-180:
-                    self.error+=360
-                print(f"error before rotation : {self.error}")
+            #     # normalize error between -180 to 180
+            #     self.error=self.target_angle-self.heading
+            #     if self.error>180:
+            #         self.error-=360
+            #     elif self.error<-180:
+            #         self.error+=360
+            #     # print(f"error before rotation : {self.error}")
+
+            #     # self.self.cmd=self.cmd
+            #     # self.self.cmd=TwistStamped()
+            #     # print("entered if else")
+                
 
                 
-                cmd=TwistStamped()
-                print("entered if else")
                 
-                self.angular_speed_slow=0.05
-                self.angular_speed_fast=1.0
-                self.error_speed_threshold=10
-                
-                
-                if (self.error <0):
-                          if self.error<-self.error_speed_threshold:
-                                print("speed fast")
-                                cmd.twist.angular.z=-self.angular_speed_fast
-                                self.publisher_.publish(cmd)
-                          else:
-                               print("speed low")
-                               cmd.twist.angular.z=-self.angular_speed_slow
-                          print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
+            #     if (self.error <0):
+            #               if self.error<-self.error_speed_threshold:
+            #                     # print("speed fast")
+            #                     self.cmd.twist.angular.z=-self.angular_speed_fast
+            #                     self.publisher_.publish(self.cmd)
+            #               else:
+            #                 #    print("speed low")
+            #                    self.cmd.twist.angular.z=-self.angular_speed_slow
+            #             #   print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
                                
 
-                elif self.error>0:
-                        if self.error<=self.error_speed_threshold: 
-                              print("speed low")
-                              cmd.twist.angular.z=+self.angular_speed_slow
-                              self.publisher_.publish(cmd)
-                        else:
-                         print("speed fast")
-                         cmd.twist.angular.z=+self.angular_speed_fast
-                         self.publisher_.publish(cmd)
-                         print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
+            #     elif self.error>0:
+            #             if self.error<=self.error_speed_threshold: 
+            #                 #   print("speed low")
+            #                   self.cmd.twist.angular.z=+self.angular_speed_slow
+            #                   self.publisher_.publish(self.cmd)
+            #             else:
+            #             #  print("speed fast")
+            #              self.cmd.twist.angular.z=+self.angular_speed_fast
+            #              self.publisher_.publish(self.cmd)
+            #             #  print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
                 
-                else :
-                     cmd.twist.angular.z=0.0
-                     self.publisher_.publish(cmd)
+            #     else :
+            #          self.cmd.twist.angular.z=0.0
+            #          self.publisher_.publish(self.cmd)
                               
-                print(f"Error {self.error}")
-                print("\n")
+            #     print(f"Error {self.error}")
+            #     print("\n")
 
-                self.error_threshold=0.3
-                if -self.error_threshold<self.error<self.error_threshold:
-                     cmd.twist.angular.z=0.0
-                     self.publisher_.publish(cmd)
-                     print("error within threshold | MOVING FORWARD")
-                     self.motion_selector="MOVING_FORWARD"
+               
+            #     if -self.error_threshold<self.error<self.error_threshold:
+            #          self.cmd.twist.angular.z=0.0
+            #          self.publisher_.publish(self.cmd)
+            #          print("Target reached | Moving Forward")
+            #          self.motion_selector="MOVING_FORWARD"
 
             # print(f"Target: {self.target_angle} Error : {self.error}")
 
@@ -305,11 +361,24 @@ class Roaming_2(Node):
 
 
 
+# def main(args=None):
+#     rclpy.init(args=args)
+#     node=Roaming_2()
+#     rclpy.spin(node)
+#     rclpy.shutdown()
+
 def main(args=None):
     rclpy.init(args=args)
-    node=Roaming_2()
+    node = Roaming_2()
     rclpy.spin(node)
     rclpy.shutdown()
+ 
+
+    
+        
+        
+
+    
 
 if __name__=="__main__":
     main()
