@@ -7,6 +7,7 @@ from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 import math
 from tf_transformations import euler_from_quaternion
+import random
 
 class Roaming_2(Node):
     def __init__(self):
@@ -22,6 +23,7 @@ class Roaming_2(Node):
         self.publisher_=self.create_publisher(TwistStamped,"/cmd_vel",10)
         self.odom_subscriber_=self.create_subscription(Odometry,"/odom",self.get_heading,10)
         self.safe_gap_list=[]
+
         self.motion_selector="MOVING_FORWARD"
         self.selected_gap=None
         self.target_angle=None
@@ -29,6 +31,11 @@ class Roaming_2(Node):
         self.merged=[]
         self.fixed_selected_middle_ray=[]
         self.closest_middle_ray=[]
+
+        self.select_from_whole_gap=0
+        self.select_from_chunks=0
+
+        
         
         self.declare_parameter("gap_threshold",0.7)
         self.gap_threshold=self.get_parameter("gap_threshold").value
@@ -47,9 +54,9 @@ class Roaming_2(Node):
         self.declare_parameter("linear_speed",1.0)
         self.linear_speed=self.get_parameter("linear_speed").value
         self.stop=0.0
-        self.angular_speed_slow=0.05
+        self.angular_speed_slow=0.02
         self.angular_speed_fast=1.0
-        self.error_speed_threshold=3
+        self.error_speed_slow_threshold=3
         self.error_threshold=0.3
 
 
@@ -189,11 +196,14 @@ class Roaming_2(Node):
 
                     
                     self.merged=[]
-                    if self.safe_gap_list[0][0][0]==0 and self.safe_gap_list[-1][-1][0]==359:
-                        self.merged=self.safe_gap_list[-1]+self.safe_gap_list[0]
-                        self.safe_gap_list.pop(0)
-                        self.safe_gap_list.pop(-1)
-                        self.safe_gap_list.append(self.merged)
+                    if len(self.safe_gap_list)>=2:
+                        if self.safe_gap_list[0][0][0]==0 and self.safe_gap_list[-1][-1][0]==359:
+                            print(f"len safe gap list for merging:{len(self.safe_gap_list)} {self.safe_gap_list}")
+                            self.merged=self.safe_gap_list[-1]+self.safe_gap_list[0]
+                            self.safe_gap_list.pop(0)
+                            self.safe_gap_list.pop(-1)
+                            self.safe_gap_list.append(self.merged)
+
                     
 
                     # for g in self.safe_gap_list:
@@ -226,17 +236,57 @@ class Roaming_2(Node):
                     self.width=len(self.safe_gap_list[maxValue_index])
                     safe_gap=self.safe_gap_list[maxValue_index]
                     self.middle_ray_index=self.width//2
+                     
+                    self.chunk_list1=[]
+                    self.temp_list1=[]   
+                    for self.safe_gap in self.safe_gap_list:
+                        for ray,distance in self.safe_gap:
+                            if len(self.temp_list1)<14:
+                                self.temp_list1.append(ray)
+                            elif len(self.temp_list1)>=14:
+                                 self.chunk_list1.append(self.temp_list1)
+                                 self.temp_list1=[]
+                                 self.temp_list1.append(ray)
+                        if len(self.temp_list1)<14:
+                                 self.temp_list1=[]
+                     
+                     
 
+                    self.chunk_middle_ray_list=[]
+                    for self.chunk in self.chunk_list1:
+                          middle_ray_index=len(self.chunk)//2
+                          middle_ray=self.chunk[middle_ray_index]
+                          self.chunk_middle_ray_list.append(middle_ray)
+                    
+
+
+                    self.closest_ray_from_chunks=min(self.chunk_middle_ray_list)
+                    
+                    print(f"safe gap list:{self.safe_gap_list}\n")
+                    print(f"chunk list:{self.chunk_list1}\n")
+                    print(f"len of gap:{len(self.gap_list)}\nlen of safe_gap_list:{len(self.safe_gap_list)}\nlen of chunk list;{len(self.chunk_list1)}\nlen of chunk_middle_ray_list:{len(self.chunk_middle_ray_list)}\nchunk_middle_ray_list:{self.chunk_middle_ray_list}\ncloset_ray_from_chunk/Closest angle:{self.closest_ray_from_chunks}\n")
+                   
+
+                    
+
+                         
+
+
+
+                         
+                     
                     #middle ray
-                    self.middle_ray_list=[]
+                    self.middle_ray_list=[] 
+                    print("enters second way")
                     for self.gap in self.safe_gap_list:
-                        self.length=len(gap)
-                        print(self.length)
+                        self.length=len(self.gap)
+                        # print(self.length)
                         self.middle_index=self.length//2
-                        print(f"middle index:{self.middle_index}")
-                        print(f"{self.gap}")
+                        # print(f"middle index:{self.middle_index}")
+                        # print(f"{self.gap}")
+                        # print(f"safe gap:{self.safe_gap_list}")
                         self.middleRay=self.gap[self.middle_index][0]
-                        print(f"middleRay:{self.middleRay}")
+                        # print(f"middleRay:{self.middleRay}")
                         self.middle_ray_list.append(self.middleRay)
                     
                     self.least_middle_ray=min(self.middle_ray_list)
@@ -245,17 +295,36 @@ class Roaming_2(Node):
                     self.middle_ray=safe_gap[self.middle_ray_index]  
                     self.len_of_gaps=[len(i) for i in self.gap_list]
                     self.len_gaps_in_safe_gap_list={len(i) for i in self.safe_gap_list}
-                    print(f"length of gap list:{(len(self.gap_list))} length of gaps in gap list:{self.len_of_gaps} length of safe_gap_list:{len(self.safe_gap_list)} len of gap in safe gap list:{self.len_gaps_in_safe_gap_list}  Length of middle gap list:{len(self.middle_ray_list)} Middle ray list:{self.middle_ray_list} selected ray:{self.least_middle_ray} min middle ray:{self.least_middle_ray}")
+                    # print(f"length of gap list:{(len(self.gap_list))} length of gaps in gap list:{self.len_of_gaps} \n length of safe_gap_list:{len(self.safe_gap_list)} len of gap in safe gap list:{self.len_gaps_in_safe_gap_list}  \n ength of middle gap list:{len(self.middle_ray_list)} Middle ray list:{self.middle_ray_list} selected ray:{self.least_middle_ray} min middle ray:{self.least_middle_ray}")
                     self.fixed_selected_middle_ray.append(self.middle_ray[0])
                     # print(f"fixed selected middle ray {self.fixed_selected_middle_ray}")
                     # self.target=self. heading+self.middle_ray[0]
-                    self.target=self. heading+self.least_middle_ray
+
+                    self.random_selected_ray=random.choice([self.middle_ray[0], self.closest_ray_from_chunks])
+
+
+                    if self.random_selected_ray==self.middle_ray[0]:
+                         self.select_from_whole_gap+=1
+                    elif self.random_selected_ray==self.closest_ray_from_chunks:
+                         self.select_from_chunks+=1
+                    print(f"number of times choosen: From whole gap:{self.select_from_whole_gap} From chunks:{self.select_from_chunks}")
+
+
+                    print(f"Random selected ray {self.random_selected_ray} from Whole gap middle ray:{self.middle_ray[0]} and Closest ray from chunks;{self.closest_ray_from_chunks}")
+                    self.target=self. heading+self.random_selected_ray
+                    # self.target=self. heading+self.closest_ray_from_chunks
+
+
                     # print(f"target {self.target}")
                 
                     if self.target>=360:
                         self.target-=360
                     elif self.target<=0:
                         self.target+=360
+
+
+
+
 
                     self.target_angle=self.target #normalized 0,360
                     # print("changes to moving")
@@ -264,61 +333,61 @@ class Roaming_2(Node):
 
 
             
-            # if self.motion_selector=="ROTATE":
+            if self.motion_selector=="ROTATE":
                 
-            #     print("Rotating")
-                
-
-            #     # normalize error between -180 to 180
-            #     self.error=self.target_angle-self.heading
-            #     if self.error>180:
-            #         self.error-=360
-            #     elif self.error<-180:
-            #         self.error+=360
-            #     # print(f"error before rotation : {self.error}")
-
-            #     # self.self.cmd=self.cmd
-            #     # self.self.cmd=TwistStamped()
-            #     # print("entered if else")
+                print("Rotating")
                 
 
+                # normalize error between -180 to 180
+                self.error=self.target_angle-self.heading
+                if self.error>180:
+                    self.error-=360
+                elif self.error<-180:
+                    self.error+=360
+                # print(f"error before rotation : {self.error}")
+
+                # self.self.cmd=self.cmd
+                # self.self.cmd=TwistStamped()
+                # print("entered if else")
+                
+
                 
                 
-            #     if (self.error <0):
-            #               if self.error<-self.error_speed_threshold:
-            #                     # print("speed fast")
-            #                     self.cmd.twist.angular.z=-self.angular_speed_fast
-            #                     self.publisher_.publish(self.cmd)
-            #               else:
-            #                 #    print("speed low")
-            #                    self.cmd.twist.angular.z=-self.angular_speed_slow
-            #             #   print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
+                if (self.error <0):
+                          if self.error<-self.error_speed_slow_threshold:
+                                # print("speed fast")
+                                self.cmd.twist.angular.z=-self.angular_speed_fast
+                                self.publisher_.publish(self.cmd)
+                          else:
+                            #    print("speed low")
+                               self.cmd.twist.angular.z=-self.angular_speed_slow
+                        #   print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
                                
 
-            #     elif self.error>0:
-            #             if self.error<=self.error_speed_threshold: 
-            #                 #   print("speed low")
-            #                   self.cmd.twist.angular.z=+self.angular_speed_slow
-            #                   self.publisher_.publish(self.cmd)
-            #             else:
-            #             #  print("speed fast")
-            #              self.cmd.twist.angular.z=+self.angular_speed_fast
-            #              self.publisher_.publish(self.cmd)
-            #             #  print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
+                elif self.error>0:
+                        if self.error<=self.error_speed_slow_threshold: 
+                            #   print("speed low")
+                              self.cmd.twist.angular.z=+self.angular_speed_slow
+                              self.publisher_.publish(self.cmd)
+                        else:
+                        #  print("speed fast")
+                         self.cmd.twist.angular.z=+self.angular_speed_fast
+                         self.publisher_.publish(self.cmd)
+                        #  print(f"selected gap Start:{self.start_safe_gap} End:{self.end_safe_gap} Average:{self.maxValue} Width:{self.width} Middle value:{self.middle_ray} Heading:{self.heading} Target: {self.target_angle} Error {self.error}")
                 
-            #     else :
-            #          self.cmd.twist.angular.z=0.0
-            #          self.publisher_.publish(self.cmd)
+                else :
+                     self.cmd.twist.angular.z=0.0
+                     self.publisher_.publish(self.cmd)
                               
-            #     print(f"Error {self.error}")
-            #     print("\n")
+                print(f"Error {self.error}")
+                print("\n")
 
                
-            #     if -self.error_threshold<self.error<self.error_threshold:
-            #          self.cmd.twist.angular.z=0.0
-            #          self.publisher_.publish(self.cmd)
-            #          print("Target reached | Moving Forward")
-            #          self.motion_selector="MOVING_FORWARD"
+                if -self.error_threshold<self.error<self.error_threshold:
+                     self.cmd.twist.angular.z=0.0
+                     self.publisher_.publish(self.cmd)
+                     print("Target reached | Moving Forward")
+                     self.motion_selector="MOVING_FORWARD"
 
             # print(f"Target: {self.target_angle} Error : {self.error}")
 
