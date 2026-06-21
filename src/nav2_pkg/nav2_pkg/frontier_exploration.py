@@ -9,8 +9,8 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 import math
 
-MIN_FRONTIER_DISTANCE_CELLS=20
-MIN_FRONTIER_CLUSTER_SIZE=3
+MIN_FRONTIER_DISTANCE_CELLS=10
+MIN_FRONTIER_CLUSTER_SIZE=7
 
 class frontier_exploration(Node):
     def __init__(self):
@@ -56,29 +56,27 @@ class frontier_exploration(Node):
         self.visited={}
         self.cluster=[]
         self.cluster_main=[]
-        # print((f"grid values:{self.grid_values}"))
         self.width=msg.info.width
-        # print(f"width:{self.width}")
         self.height=msg.info.height
-        # print(f"height:{self.height}")
+        # print(f"height:{self.height} width:{self.width}")
         print(len(msg.data)%2)
         self.resolution=msg.info.resolution
         self.origin_x=msg.info.origin.position.x
         self.origin_y=msg.info.origin.position.y
-        print(f"resolution:{self.resolution} origin_x:{self.origin_x} origin_y:{self.origin_y}")
+        # print(f"resolution:{self.resolution} origin_x:{self.origin_x} origin_y:{self.origin_y}")
 
-        pose=self.get_robot_pose()
+        pose=self.get_robot_pose()  #get robots current position in x,y form
 
         if pose is not None:
-            robot_x,robot_y=pose
-            print(f"robot x={robot_x}")
-            print(f"robot y={robot_y}")
+            robot_x,robot_y,robot_or_x,robot_or_y,robot_or_z,robot_or_w=pose
             self.robot_col=int( (robot_x-self.origin_x)/self.resolution)
             self.robot_row=int((robot_y-self.origin_y)/self.resolution)
-            # print(self.robot_row,self.robot_col)
+            # print(f"robot (x,y):({robot_x},{robot_y}) robot (r,c):({self.robot_row},{self.robot_col})")
         elif pose is None:
             print(f"pose returned None")
             return False
+        
+        #convert grid value to 2d
         self.two_d_grid=[]
         self.temp=[]
         for i in self.grid_values:
@@ -94,13 +92,16 @@ class frontier_exploration(Node):
         # print(f"lenght of self.two_f_grid:{len(self.two_d_grid)}")
         # print(f"2d grid:{self.two_d_grid}")
 
+        #frontier cell list (4 sides)
         self.frontier_cell_list=[]
-
 
         width=self.width
         height=self.height
-        # print(f"width,height;{(width,height)}")
+       
+        self.frontier_cell_list=[]
 
+        width=self.width
+        height=self.height
        
         for r in range(0,height):
             for c in range(0,width):
@@ -124,85 +125,155 @@ class frontier_exploration(Node):
                     right=self.two_d_grid[r][c+1]
                 else: 
                     right=False
+
+                if r-1>=0 and c-1>=0:
+                    upper_left=self.two_d_grid[r-1][c-1]
+                else:
+                    upper_left=False
+
+                if r-1>=0 and c+1<width:
+                    upper_right=self.two_d_grid[r-1][c+1]
+                else:
+                    upper_right=False
+
+                if r+1<height and c-1>=0:
+                    lower_left=self.two_d_grid[r+1][c-1]
+                else:
+                    lower_left=False
+
+                if r+1<height and c+1<width:
+                    lower_right=self.two_d_grid[r+1][c+1]
+                else:
+                    lower_right=False
                 
                 if self.two_d_grid[r][c]==0:
                         
-                    if (upper==-1) or (lower==-1) or (right==-1) or (left==-1):
+                    if (upper==-1) or (lower==-1) or (right==-1) or (left==-1) or (upper_left==-1) or (upper_right==-1) or (lower_left==-1) or (lower_right==-1):
                         self.frontier_cell_list.append((r,c))
                                 
-        # print(*self.frontier_cell_list,sep="\n")
+        # print("frontier cell list",*self.frontier_cell_list,sep="\n")
 
+        # making frontier clusters
         for cell in self.frontier_cell_list:
          if cell not in self.visited:   
             
-            # print(f"cell:{cell}")
             self.queue.append(cell)     
             self.visited[cell]=True
-            # print(f" before while satrt:{cell} queue:{self.queue} visited {self.visited}")
             
-         
-
             while(self.queue):
-            #    print("enterd while")
                self.current=self.queue[0]
                if self.current not in self.cluster:
                   self.cluster.append(self.current)
                self.queue.popleft()
-            #    print(f"queue:{self.queue} current:{self.current} visited {self.visited}")
                
-               
-
                self.r,self.c=self.current
                self.lower=(self.r+1,self.c)
                self.left=(self.r,self.c-1)
                self.upper=(self.r-1,self.c)
                self.right=(self.r,self.c+1)
-               
+               self.upper_left=(self.r-1,self.c-1)
+               self.upper_right=(self.r-1,self.c+1)
+               self.lower_left=(self.r+1,self.c-1)
+               self.lower_right=(self.r+1,self.c+1)
                
                if self.lower in self.frontier_cell_list and self.lower not in self.visited:
-                #   print(f"self.lower {self.lower}")
                   self.queue.append(self.lower)
                   self.visited[self.lower]=True
                   self.cluster.append(self.lower)
-                #   print(f"lower queue {self.queue} visited:{self.visited} cluster:{self.cluster}")
                   
-               
                if self.upper in self.frontier_cell_list and self.upper not in self.visited :
-                #   print(f"fself.upper {self.upper}")
                   self.queue.append(self.upper)
                   self.visited[self.upper]=True
                   self.cluster.append(self.upper)
-                #   print(f"upper queue {self.queue} visited:{self.visited} cluster:{self.cluster}")
                   
-               
                if self.left in self.frontier_cell_list and self.left not in self.visited:
-                #   print(f"self.left {self.left}")
                   self.queue.append(self.left)
                   self.visited[self.left]=True
                   self.cluster.append(self.left)
-                #   print(f"left queue {self.queue} visited:{self.visited} cluster:{self.cluster}")
                   
-               
                if self.right in self.frontier_cell_list and self.right not in self.visited:
-                #   print(f"self.right {self.right}")
                   self.queue.append(self.right)
                   self.visited[self.right]=True
                   self.cluster.append(self.right)
-                #   print(f"right queue {self.queue} visited:{self.visited} cluster:{self.cluster}")
+
+               if self.upper_left in self.frontier_cell_list and self.upper_left not in self.visited:
+                  self.queue.append(self.upper_left)
+                  self.visited[self.upper_left]=True
+                  self.cluster.append(self.upper_left)
+
+               if self.upper_right in self.frontier_cell_list and self.upper_right not in self.visited:
+                  self.queue.append(self.upper_right)
+                  self.visited[self.upper_right]=True
+                  self.cluster.append(self.upper_right)
+
+               if self.lower_left in self.frontier_cell_list and self.lower_left not in self.visited:
+                  self.queue.append(self.lower_left)
+                  self.visited[self.lower_left]=True
+                  self.cluster.append(self.lower_left)
+
+               if self.lower_right in self.frontier_cell_list and self.lower_right not in self.visited:
+                  self.queue.append(self.lower_right)
+                  self.visited[self.lower_right]=True
+                  self.cluster.append(self.lower_right)
                   
-               
             self.cluster_main.append(self.cluster)
             self.cluster=[]
-            # print(f"OUT OF WHILE LOOP self.cluster {self.cluster} visited {self.visited} queue:{self.queue}")
-        # print(f"main clustor: {self.cluster_main}")
-        # in r,c
+            self.cluster_len=[]
+                  
+               
+
+        self.cluster_len=[]
+        for index,c in enumerate(self.cluster_main):
+            leng=len(c)
+            self.cluster_len.append((index,leng))
+        
+        sorted_cluster=sorted(self.cluster_len,key=lambda x:x[1],reverse=True)
+        # print(f"sorted cluster:{sorted_cluster}")
+        minimum=min(sorted_cluster,key=lambda x:x[1])
+        maximum=max(sorted_cluster,key=lambda x:x[1])
+        print(f"len of sorted cluster list:{len(sorted_cluster)} min:{minimum}, max:{maximum}")
+        self.selected_large_cluster=self.cluster_main[maximum[0]]
+        # print(f"largest selected cluster:{self.selected_large_cluster}")
+        
+
+
+
+        print("\n========== FRONTIER DEBUG ==========")
+        print("Total clusters:", len(self.cluster_main))
+
+        if i in self.cluster_main==0:
+            print("equal to zero")
 
         if not self.cluster_main:
             self.get_logger().info("No frontier clusters found.")
             return False
 
-        # averages
-        self.cluster_avg=[]
+        if len(self.cluster_main) > 0:
+            sizes = [len(c) for c in self.cluster_main]
+
+            print(f"Largest cluster size:{max(sizes)} Smallest cluster size:{min(sizes)}")
+            self.sizes_sorted = sorted(sizes, reverse=True)
+            print(f"len of cluster:{len(self.cluster_main)} len of sorted:{len(self.sizes_sorted)}")
+
+        #     print(f"Top 20 cluster sizes:{self.sizes_sorted[:20]}")
+        #     print("\nFirst 20 clusters:")
+        #     for i, cluster in enumerate(self.cluster_main[:20]):
+        #         print(
+        #             f"cluster {i} "
+        #             f"size={len(cluster)} "
+        #             f"sample={cluster[:5]}"
+        # )
+
+
+            # print(f"OUT OF WHILE LOOP self.cluster {self.cluster} visited {self.visited} queue:{self.queue}")
+        # print(f"main cluster: {self.cluster_main}")
+        # in r,c
+
+
+
+        # find averages to represent them for finding distance
+
+        self.cluster_avg=[]  #index,(r,c)
         for index,cluster in enumerate(self.cluster_main):
             r_avg=0
             c_avg=0
@@ -210,64 +281,75 @@ class frontier_exploration(Node):
                 r_avg+=r/(len(cluster))
                 c_avg+=c/(len(cluster))
             self.cluster_avg.append((index,(r_avg,c_avg)))
+        
 
-        self.distance_list=[]
+
+        #finding distance of cluster from robot
+
+        self.distance_list=[]     #(index,distance)
         for index,i in self.cluster_avg:
             row,col=i
             self.distance = math.sqrt((self.robot_col - col)**2 + (self.robot_row - row)**2)
             self.distance_list.append((index,self.distance))
-        print(f"len cluster list;{len(self.cluster_main)} len cluster avg list;{len(self.cluster_avg)} len distance_list:{len(self.distance_list)} ")
+        print(f"len cluster list:{len(self.cluster_main)} len cluster avg list;{len(self.cluster_avg)} len distance_list:{len(self.distance_list)} ")
         # print(self.distance_list)
-        # print(self.distance_list)
-        self.far_distance_list=[]
-        self.index=[]
-        for index,i in self.distance_list:
-            # print(i)
-            if i>MIN_FRONTIER_DISTANCE_CELLS:
-                self.far_distance_list.append((index,i))
 
+
+
+        #only keeping distances greater then threshold
+
+        self.far_distance_list=[]    #(index,distance)
+        for index,d in self.distance_list:
+            if d>MIN_FRONTIER_DISTANCE_CELLS:
+                self.far_distance_list.append((index,d))
+        print(f"clusters in far_distance_list:{len(self.far_distance_list)}")
         # print(f"far distance list{self.far_distance_list}")
+
         if not self.far_distance_list:
             self.get_logger().info("No frontier cluster far enough from the robot.")
             return False
+        
 
-        self.goal_candidates=[
-            (index,distance)
-            for index,distance in self.far_distance_list
-            if len(self.cluster_main[index])>=MIN_FRONTIER_CLUSTER_SIZE
-        ]
+
+        # only keeping goals passing threshold and minimum cluster size
+
+        self.goal_candidates=[]  # (index,distance)
+        for index,distance in self.far_distance_list:
+            if len(self.cluster_main[index])>=MIN_FRONTIER_CLUSTER_SIZE:
+                self.goal_candidates.append((index,distance))
+        print(f"goal candidates len:{len(self.goal_candidates)}")
+        for idx,dist in self.goal_candidates:
+            print(f"size:{len(self.cluster_main[idx])}, Distance:{dist}")
+
         if not self.goal_candidates:
-            self.goal_candidates=self.far_distance_list
+            print(f"no goal candidates:{self.far_distance_list}")
+            print(self.sizes_sorted)
+            # self.goal_candidates=self.far_distance_list
+
+
+
 
         self.index1, self.distance = min(self.goal_candidates, key=lambda x: x[1])
-        # self.min=min(self.far_distance_list)
-        # self.min_index=self.distance_list.index(self.min)
+
         self.min_custor=self.cluster_main[self.index1]
         self.min_avg=self.cluster_avg[self.index1]
-        self.max=max(self.distance_list)
+        self.max=max(self.goal_candidates, key=lambda x: x[1])
         self.max_index=self.distance_list.index(self.max)
         self.max_custor=self.cluster_main[self.index1]
         print(
-                f"min distance:{self.distance}\n"
-                f"index:{self.index1}\n"
-                f"main_clustor:{self.min_custor}\n"
-                f"len min_clustor:{len(self.min_custor)}\n"
-                f"in avglist:{self.min_avg}\n"
-                f"max:{self.max} index:{self.max_index}\n"
-                # f"distancelist:{self.distance_list}\n"
-                f"far_distance list:{len(self.far_distance_list)}"
-                f"first far"
+                f"min distance:{self.distance} index:{self.index1} cluster:{self.min_custor} length:{len(self.min_custor)}\n"
+                f"max distance:{self.max[1]} index:{self.max_index} cluster:{self.max_custor} length:{len(self.max_custor)}\n"
             )
         # print(*self.far_distance_list,sep="\n")
 
 
 
-        _,(avg_row,avg_col)=self.min_avg
-        self.selected_cell=min(
-            self.min_custor,
+        _,(avg_row,avg_col)=self.cluster_avg[maximum[0]]
+        self.selected_cell=max(
+            self.cluster_main[maximum[0]],
             key=lambda cell: math.sqrt((cell[0]-avg_row)**2 + (cell[1]-avg_col)**2)
         )
-        print(f"robott pose:{self.robot_row,self.robot_col} selected cell:{self.selected_cell}")
+        print(f"robott pose:{self.robot_row,self.robot_col} selected cell:{self.selected_cell} ")
         self.r,self.c=self.selected_cell
 
         # convert (r,c) in x,y
@@ -280,12 +362,21 @@ class frontier_exploration(Node):
         self.goal.header.stamp=self.get_clock().now().to_msg()
         self.goal.pose.position.x=self.des_x
         self.goal.pose.position.y=self.des_y
-        self.goal.pose.orientation.w=1.0
+        self.goal.pose.orientation.x=robot_or_x
+        self.goal.pose.orientation.y=robot_or_y
+        self.goal.pose.orientation.z=robot_or_z
+        self.goal.pose.orientation.w=robot_or_w
+        # self.goal.pose.orientation.w=1.0
 
         if not self.nav_client.wait_for_server(timeout_sec=0.1):
             self.get_logger().warn("NavigateToPose action server is not available yet.")
             return False
-
+        # print(f"\nSelected frontier: index:{self.index1} size:{len(self.cluster_main[self.index1])} distance:{self.distance}")
+        print(f"\nSelected frontier: index:{maximum[0]} size:{len(self.cluster_main[maximum[0]])} distance:{self.distance_list[maximum[0]]} cluster:{self.cluster_main[maximum[0]]}")
+        # print("index =", self.index1)
+        # print("size =", len(self.cluster_main[self.index1]))
+        # print("distance =", self.distance)
+        # print("cluster =", self.cluster_main[self.index1])
         goal_msg=NavigateToPose.Goal()
         goal_msg.pose=self.goal
 
@@ -341,7 +432,12 @@ class frontier_exploration(Node):
             )
             x=transform.transform.translation.x
             y=transform.transform.translation.y
-            return x,y
+
+            rx=transform.transform.rotation.x
+            ry=transform.transform.rotation.y
+            rz=transform.transform.rotation.z
+            rw=transform.transform.rotation.w
+            return x,y,rx,ry,rz,rw
         except Exception as e:
             self.get_logger().warn(str(e))
             return None
