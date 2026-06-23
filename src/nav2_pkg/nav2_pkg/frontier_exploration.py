@@ -26,6 +26,7 @@ class frontier_exploration(Node):
         self.cluster_main=[]
         self.state="finding frontier"
         self.visited_closest_cell=[]
+        self.visited_cell=[]
 
         # Blocks map processing while choosing or driving to a goal.
         self.is_navigating=False
@@ -237,7 +238,6 @@ class frontier_exploration(Node):
         
 
 
-
         print("\n========== FRONTIER DEBUG ==========")
         print("Total clusters:", len(self.cluster_main))
 
@@ -309,6 +309,17 @@ class frontier_exploration(Node):
             self.get_logger().info("No frontier cluster far enough from the robot.")
             return False
         
+        self.cluster_scores=[]   # (index, score)
+        for index,d in self.far_distance_list:
+            size=len(self.cluster_main[index])
+            score=size/d if d>0 else size
+            self.cluster_scores.append((index,score))
+
+        best_index,best_score=max(self.cluster_scores,key=lambda x:x[1])
+        print(f"best scored cluster -> index:{best_index} score:{best_score} size:{len(self.cluster_main[best_index])}")
+        
+
+        
 
 
         # only keeping goals passing threshold and minimum cluster size
@@ -324,7 +335,7 @@ class frontier_exploration(Node):
         if not self.goal_candidates:
             print(f"no goal candidates:{self.far_distance_list}")
             print(self.sizes_sorted)
-            # self.goal_candidates=self.far_distance_list
+            self.goal_candidates=self.far_distance_list
 
 
 
@@ -343,14 +354,18 @@ class frontier_exploration(Node):
         # print(*self.far_distance_list,sep="\n")
 
 
-
-        _,(avg_row,avg_col)=self.cluster_avg[maximum[0]]
+        idx=best_index
+        idx=maximum[0]
+        _,(avg_row,avg_col)=self.cluster_avg[idx]
         self.selected_cell=max(
-            self.cluster_main[maximum[0]],
+            self.cluster_main[idx],
             key=lambda cell: math.sqrt((cell[0]-avg_row)**2 + (cell[1]-avg_col)**2)
         )
+        # print(f"\nSelected frontier: index:{maximum[0]} size:{len(self.cluster_main[maximum[0]])} distance:{self.distance_list[maximum[0]]} cluster:{self.cluster_main[maximum[0]]}")
+        print(f"\nSelected frontier: index:{best_index} size:{len(self.cluster_main[best_index])} distance:{self.distance_list[best_index]} cluster:{self.cluster_main[best_index]}")
         print(f"robott pose:{self.robot_row,self.robot_col} selected cell:{self.selected_cell} ")
         self.r,self.c=self.selected_cell
+        self.visited_cell.append((self.r,self.c))
 
         # convert (r,c) in x,y
         self.des_x=((self.origin_x)+(self.c*self.resolution))+(self.resolution/2)
