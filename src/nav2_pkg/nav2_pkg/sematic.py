@@ -11,25 +11,43 @@ class sematic_mapping(Node):
             super().__init__("sematic_mapping")
 
             self.image_subscriber=self.create_subscription(Image,"/camera/image_raw",self.callback,10)
-            self.bridge=CvBridge()
-            self.model=YOLO("yolo11x.pt")
+            self.bridge=CvBridge()  #converts ros image type to opencv image type(numpy array) , self.bridge is an object of CvBridge class whicih contains several functions for converting images
+            self.model=YOLO("yolo11x.pt") #loads trained neural network
+            self.obj_list=[]
 
 
 
 
         def callback(self,msg:Image):
             self.image=msg
-            self.frame=self.bridge.imgmsg_to_cv2(msg,desired_encoding="bgr8")
+            self.frame=self.bridge.imgmsg_to_cv2(msg,desired_encoding="bgr8")   #mag=ros2 image that arrived from the camera feed  (type=senseor_msg.msg.Image),  .imgmsg_to_cv2 is one of the methods(functions) insdie CVBridge object which convert ros image to opencv image , msg=the image we want to convert, desired_encoding="bgr8" measn give output img in BGR format wiht 8 bit per color channel,after conversion it return and opencv image thaat is stored in self.frame
                 # Run YOLO
-            results = self.model(self.frame)
+            results = self.model(self.frame,conf=0.8)  #this variable stores the detected objects
 
             # Get the first (and only) result
-            result = results[0]
+            # print(results)
 
-            # Draw bounding boxes and labels
+            for result in results:
+                for box in result.boxes:
+                    class_id = int(box.cls[0])
+                    object_name = result.names[class_id]
+                    confidence = float(box.conf[0])
+
+                    present = False
+
+                    for obj, _ in self.obj_list:
+                        if obj == object_name:
+                            present = True
+                            break
+
+                    if not present:
+                        self.obj_list.append((object_name, confidence))
+
+            print(self.obj_list)
+            # #Draw bounding boxes and labels on the detected image
             annotated_frame = result.plot()
 
-            # Show the annotated image
+            ## displays the annotated image
             cv2.imshow("YOLO Detection", annotated_frame)
             cv2.waitKey(1)
 
@@ -57,13 +75,7 @@ class sematic_mapping(Node):
 
         #     if cv2.waitKey(1)==ord('q'):
         #         break
-        # # for box in result.boxes:
-        # #     class_id = int(box.cls[0])   # Convert tensor to an integer
-        # #     class_name = result.names[class_id]   # Look up the class name
-        # #     confidence = float(box.conf[0])   # Confidence score
-
-        # #     print(f"Object: {class_name}, Confidence: {confidence:.2f}")
-
+        
 def main(args=None):
      rclpy.init(args=args)
      node=sematic_mapping()
