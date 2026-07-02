@@ -16,11 +16,12 @@ from tf2_ros import Buffer,TransformListener
 import tf2_geometry_msgs
 
 
+
 class sematic_mapping(Node):
         def __init__(self):
             super().__init__("sematic_mapping")
-            self.declare_parameter("use_sim_time",True)
             print(self.get_parameter("use_sim_time").value)
+            print("ru")
             # self.image_subscriber=self.create_subscription(Image,"/camera/image_raw",self.callback,10)
             self.bridge=CvBridge()  #converts ros image type to opencv image type(numpy array) , self.bridge is an object of CvBridge class whicih contains several functions for converting images
             self.model=YOLO("yolo11x.pt") #loads trained neural network
@@ -32,8 +33,6 @@ class sematic_mapping(Node):
             self.ts.registerCallback(self.callback)
             self.tf_buffer=Buffer()
             self.tf_listener=TransformListener(self.tf_buffer,self)
-
-
 
 
         def callback(self,img_msg:Image, scan_msg:LaserScan):
@@ -133,19 +132,30 @@ class sematic_mapping(Node):
 
             point=PointStamped() #point and header, represent a point in coordinate frame
             point.header.frame_id="base_scan"  #saying these x,y coordinates are measured in base scan frame
-            point.header.stamp=self.get_clock().now().to_msg()
+            point.header.stamp=scan_msg.header.stamp
 
             point.point.x=self.x #points in current frame
             point.point.y=self.y
             point.point.z=0.0
 
-            # converting point in base scan frame to map frame
-            point_map=self.tf_buffer.transform(
-                 point,
-                 "map"
-            )
-            x_map=point_map.point.x
-            y_map=point_map.point.y
+            print("---------------------")
+            print("Image :", img_msg.header.stamp.sec, img_msg.header.stamp.nanosec)
+            print("Scan  :", scan_msg.header.stamp.sec, scan_msg.header.stamp.nanosec)
+
+            try:
+                tf = self.tf_buffer.lookup_transform(
+                    "map",
+                    "base_scan",
+                    # rclpy.time.Time()
+                    rclpy.time.Time.from_msg(scan_msg.header.stamp),
+                    timeout=rclpy.duration.Duration(seconds=0.2)
+                )
+                point_map=tf2_geometry_msgs.do_transform_point(point,tf)
+                x_map=point_map.point.x
+                y_map=point_map.point.y
+                print("Latest TF :", tf.header.stamp.sec, tf.header.stamp.nanosec)
+            except Exception as e:
+                print(e)
 
             
             cv2.imshow("YOLO Detection", annotated_frame)
