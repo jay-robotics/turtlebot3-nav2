@@ -14,13 +14,16 @@ from geometry_msgs.msg import PointStamped
 import math
 from tf2_ros import Buffer,TransformListener
 import tf2_geometry_msgs
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
+
 
 
 
 class sematic_mapping(Node):
         def __init__(self):
             super().__init__("sematic_mapping")
-            print(self.get_parameter("use_sim_time").value)
+            print(f" sim time value:{self.get_parameter("use_sim_time").value}")
             print("ru")
             # self.image_subscriber=self.create_subscription(Image,"/camera/image_raw",self.callback,10)
             self.bridge=CvBridge()  #converts ros image type to opencv image type(numpy array) , self.bridge is an object of CvBridge class whicih contains several functions for converting images
@@ -33,6 +36,10 @@ class sematic_mapping(Node):
             self.ts.registerCallback(self.callback)
             self.tf_buffer=Buffer()
             self.tf_listener=TransformListener(self.tf_buffer,self)
+            self.navigator=BasicNavigator()
+            self.navigator.waitUntilNav2Active(localizer='slam_toolbox')
+            self.send_goal="send"
+
 
 
         def callback(self,img_msg:Image, scan_msg:LaserScan):
@@ -153,6 +160,35 @@ class sematic_mapping(Node):
                 point_map=tf2_geometry_msgs.do_transform_point(point,tf)
                 x_map=point_map.point.x
                 y_map=point_map.point.y
+                print(f"points on map:{(x_map,y_map)}")
+
+                self.goal=PoseStamped()
+                self.goal.header.frame_id="map" #tells the coordinates are in map frame
+                self.goal.header.stamp=self.navigator.get_clock().now().to_msg() #time at which this message was created
+                self.goal.pose.position.x=x_map
+                self.goal.pose.position.y=y_map
+                self.goal.pose.orientation.x = 0.0
+                self.goal.pose.orientation.y = 0.0
+                self.goal.pose.orientation.z = 0.0
+                self.goal.pose.orientation.w = 1.0
+                print("sending goal")
+                if self.send_goal=="send_goal":
+                  self.navigator.goToPose(self.goal)
+                  self.send_goal="goal_sent"
+                if self.send_goal=="goal_sent":
+                    check=self.navigator.isTaskComplete()
+                    if check==True:
+                      self.send_goal="send_goal"
+
+                result=self.navigator.getResult()
+                print(f"result:{result}")
+                # print(f"task info:{check}")
+                # while not self.navigator.isTaskComplete():
+                #     pass
+                # result=self.navigator.getResult()
+                # print(result)
+
+
                 print("Latest TF :", tf.header.stamp.sec, tf.header.stamp.nanosec)
             except Exception as e:
                 print(e)
@@ -189,7 +225,11 @@ class sematic_mapping(Node):
 def main(args=None):
      rclpy.init(args=args)
      node=sematic_mapping()
-     rclpy.spin(node)
+    # executor=MultiThreadedExecutor()
+     executor=SingleThreadedExecutor()
+     executor.add_node(node)
+    # executor.add_node(node.navigator)
+     executor.spin()
      rclpy.shutdown()
 
 if __name__=="__main__":
