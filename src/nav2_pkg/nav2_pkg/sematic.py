@@ -43,6 +43,8 @@ class sematic_mapping(Node):
             self.angle=self.get_parameter("angle").value
             self.declare_parameter("motion",False)
             self.motion=self.get_parameter("motion").value
+            self.partitions=set()
+            self.angle_list=[27,18,11,8,1,358,351,348,341,331]
 
 
 
@@ -90,16 +92,45 @@ class sematic_mapping(Node):
             cv2.line(annotated_frame,(0,centre_y),(width,centre_y),(0,150,0),2)
             parts = 5
             step = (width // 2) // parts
+            print(f"height:{height} width:{width} centre:{centre_x,centre_y} step:{step}")
             
             for i in range(parts):
                 # Left side
                 x = centre_x - i * step
                 cv2.line(annotated_frame, (x, 0), (x, height), (255, 0, 0), 1)
+                self.partitions.add(x)
+
             
                 # Right side
                 if i != 0:
                   x = centre_x + i * step
+                  self.partitions.add(x)
                   cv2.line(annotated_frame, (x, 0), (x, height), (255, 0, 0), 1)
+            partition_list=list(self.partitions)
+            sorted_list=sorted(partition_list)
+            edge=[0]+sorted_list+[width]
+            text_positions=[]
+            print(f"sorted_list:{sorted_list}")
+            for i in range(len(edge) - 1):
+                left = edge[i]
+                right = edge[i + 1]
+                middle_x = (left + right) // 2
+                middle_y=centre_y//2
+                text_positions.append((middle_x,middle_y))
+            print(f"text_position list:{text_positions}")
+            for pos, angle in zip(text_positions, self.angle_list):
+                    cv2.putText(
+                        annotated_frame,
+                        str(angle),
+                        pos,
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2
+                    )
+
+
+
 
             # height, width = annotated_frame.shape[:2]
 
@@ -171,6 +202,7 @@ class sematic_mapping(Node):
                 #     pass
                 # result=self.navigator.getResult()
                 # print(result)
+
 
 
                 print("Latest TF :", tf.header.stamp.sec, tf.header.stamp.nanosec)
