@@ -38,7 +38,12 @@ class sematic_mapping(Node):
             self.tf_listener=TransformListener(self.tf_buffer,self)
             self.navigator=BasicNavigator()
             self.navigator.waitUntilNav2Active(localizer='slam_toolbox')
-            self.send_goal="send"
+            self.send_goal="send_goal"
+            self.declare_parameter("angle",90)
+            self.angle=self.get_parameter("angle").value
+            self.declare_parameter("motion",False)
+            self.motion=self.get_parameter("motion").value
+
 
 
 
@@ -48,7 +53,7 @@ class sematic_mapping(Node):
             # print(f"0 deg:{self.ranges[0]} 90 deg:{self.ranges[90]}, 180 deg:{self.ranges[180]} 270 deg:{self.ranges[270]}")
             self.frame=self.bridge.imgmsg_to_cv2(img_msg,desired_encoding="bgr8")   #mag=ros2 image that arrived from the camera feed  (type=senseor_msg.msg.Image),  .imgmsg_to_cv2 is one of the methods(functions) insdie CVBridge object which convert ros image to opencv image , msg=the image we want to convert, desired_encoding="bgr8" measn give output img in BGR format wiht 8 bit per color channel,after conversion it return and opencv image thaat is stored in self.frame
                 # Run YOLO
-            results = self.model(self.frame,conf=0.8)  #this variable stores the detected objects
+            results = self.model(self.frame,conf=0.8,verbose=False)  #this variable stores the detected objects
 
 
             # Get the first (and only) result
@@ -81,8 +86,20 @@ class sematic_mapping(Node):
             height,width=annotated_frame.shape[:2]   #finding the size of image(frame),annoted_frame is a numpy array which has .shape property which give (height,width,shape)
             centre_x=width//2 # // because opencv drawing fns expect integers but / gives decimals
             centre_y=height//2
-            cv2.line(annotated_frame,(centre_x,0),(centre_x,height),(0,255,0),2)  #cv2.line(image, start_point, end_point, color, thickness)
-            cv2.line(annotated_frame,(0,centre_y),(width,centre_y),(0,255,0),2)
+            cv2.line(annotated_frame,(centre_x,0),(centre_x,height),(0,150,0),2)  #cv2.line(image, start_point, end_point, color, thickness)
+            cv2.line(annotated_frame,(0,centre_y),(width,centre_y),(0,150,0),2)
+            parts = 5
+            step = (width // 2) // parts
+            
+            for i in range(parts):
+                # Left side
+                x = centre_x - i * step
+                cv2.line(annotated_frame, (x, 0), (x, height), (255, 0, 0), 1)
+            
+                # Right side
+                if i != 0:
+                  x = centre_x + i * step
+                  cv2.line(annotated_frame, (x, 0), (x, height), (255, 0, 0), 1)
 
             # height, width = annotated_frame.shape[:2]
 
@@ -92,47 +109,12 @@ class sematic_mapping(Node):
             # Long enough to reach outside the image
             length = max(width, height) * 2
 
-            for angle in range(0,360,3):
-
-                theta = math.radians(angle)
-
-                # Your convention:
-                # 0° = Up
-                # 90° = Left
-                # 180° = Down
-                # 270° = Right
-
-                end_x = int(centre_x - length * math.sin(theta))
-                end_y = int(centre_y - length * math.cos(theta))
-
-                cv2.line(
-                    annotated_frame,
-                    (centre_x, centre_y),
-                    (end_x, end_y),
-                    (225, 0, 0),
-                    1
-                )
-                 # Position the angle text slightly before the end of the ray
-                text_x = int(centre_x - (100) * math.sin(theta))
-                text_y = int(centre_y - (100) * math.cos(theta))
-                # print(text_x,text_y)
-
-                # Draw the angle value
-                # cv2.putText(
-                #     annotated_frame,
-                #     str(angle),
-                #     (text_x, text_y),
-                #     cv2.FONT_HERSHEY_SIMPLEX,
-                #     0.3,
-                #     (0, 225, 0),
-                #     1,
-                #     cv2.LINE_AA
-                # )
-
             ## displays the annotated image
-            angle=279
-            theta=math.radians(angle)  #because sin and cos requies radians
-            self.ray=self.ranges[angle]
+
+            print(f"aself.angle:{self.angle}")
+            # self.declare_parameter()
+            theta=math.radians(self.angle)  #because sin and cos requies radians
+            self.ray=self.ranges[self.angle]-0.7
             # converting polar(lidar coordinates(distance,angle)) to cartesian(x,y,z)( for TF2)
             self.x=self.ray*math.cos(theta)
             self.y=self.ray*math.sin(theta)
@@ -151,11 +133,11 @@ class sematic_mapping(Node):
 
             try:
                 tf = self.tf_buffer.lookup_transform(
-                    "map",
-                    "base_scan",
-                    # rclpy.time.Time()
-                    rclpy.time.Time.from_msg(scan_msg.header.stamp),
-                    timeout=rclpy.duration.Duration(seconds=0.2)
+                    "map", #target_frame(the frame u want to transform into=give poase in map frame)
+                    "base_scan", #source frame(the fram u have currently)
+                    # rclpy.time.Time() #get latest transform stored
+                    rclpy.time.Time.from_msg(scan_msg.header.stamp), #at what time want the transform, askign for transform when the scan came,if it dosent have 
+                    timeout=rclpy.duration.Duration(seconds=0.2)  #how long to wait it transform isnt available
                 )
                 point_map=tf2_geometry_msgs.do_transform_point(point,tf)
                 x_map=point_map.point.x
@@ -172,13 +154,15 @@ class sematic_mapping(Node):
                 self.goal.pose.orientation.z = 0.0
                 self.goal.pose.orientation.w = 1.0
                 print("sending goal")
+                print(f"send_goal flag={self.send_goal}")
                 if self.send_goal=="send_goal":
-                  self.navigator.goToPose(self.goal)
+                  if self.motion==True:
+                   self.navigator.goToPose(self.goal)
                   self.send_goal="goal_sent"
                 if self.send_goal=="goal_sent":
                     check=self.navigator.isTaskComplete()
                     if check==True:
-                      self.send_goal="send_goal"
+                      self.send_goal="stop"
 
                 result=self.navigator.getResult()
                 print(f"result:{result}")
