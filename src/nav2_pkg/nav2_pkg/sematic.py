@@ -63,12 +63,12 @@ class sematic_mapping(Node):
 
             for result in results:
                 annotated_frame = result.plot()
-
+                box_centre_x=None
                 for box in result.boxes:
                     x1,y1,x2,y2=box.xyxy[0] #when detects it returns bounding box as box.xyxy=(x1,y1,x2,y2),(x1,y1)= top left corner ,(x2,y2)=botton right corner
-                    centrex=int((x1+x2)/2)
-                    centrey=int((y1+y2)/2)
-                    cv2.circle(annotated_frame,(centrex,centrey),5,(0,0,255),-1)  #cv2.circle(image, centre, radius, color(B,G,R), thickness(2=draws only border, -1=fills the circle))
+                    box_centre_x=int((x1+x2)/2)
+                    box_centre_y=int((y1+y2)/2)
+                    cv2.circle(annotated_frame,(box_centre_x,box_centre_y),5,(0,0,255),-1)  #cv2.circle(image, centre, radius, color(B,G,R), thickness(2=draws only border, -1=fills the circle))
                     class_id = int(box.cls[0])
                     object_name = result.names[class_id]
                     confidence = float(box.conf[0])
@@ -115,19 +115,40 @@ class sematic_mapping(Node):
                 left = edge[i]
                 right = edge[i + 1]
                 middle_x = (left + right) // 2
-                middle_y=centre_y//2
+                middle_y=centre_y//4
                 text_positions.append((middle_x,middle_y))
             print(f"text_position list:{text_positions}")
             for pos, angle in zip(text_positions, self.angle_list):
+                    (text_width,text_height),baseline=cv2.getTextSize(
+                        str(angle),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        2
+                    )
+                    x=pos[0]-text_width//2
+                    y=pos[1]
                     cv2.putText(
                         annotated_frame,
                         str(angle),
-                        pos,
+                        (x,y),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (0, 255, 255),
                         2
                     )
+            
+            if box_centre_x is not None:
+               for a in range(len(edge)-1):
+                    if edge[a]<=box_centre_x<edge[a+1]:
+                        cv2.rectangle(
+                            annotated_frame,
+                            (edge[a],0),
+                            (edge[a+1],height),
+                            (0,0,225),
+                            3
+                        )
+
+
 
 
 
