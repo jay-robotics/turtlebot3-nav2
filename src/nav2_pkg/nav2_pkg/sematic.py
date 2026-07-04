@@ -1,6 +1,28 @@
+import os
+from pathlib import Path
+
+for font_dir in (
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/truetype/liberation",
+    "/usr/share/fonts",
+):
+    if os.path.isdir(font_dir):
+        os.environ.setdefault("QT_QPA_FONTDIR", font_dir)
+        break
+
 from ultralytics import YOLO
 import cv2
 from cv_bridge import CvBridge
+
+cv2_root = Path(cv2.__file__).resolve().parent
+qt_fonts_dir = cv2_root / "qt" / "fonts"
+qt_fonts_dir.mkdir(parents=True, exist_ok=True)
+
+if not any(qt_fonts_dir.iterdir()):
+    try:
+        os.symlink("/usr/share/fonts/truetype/dejavu", qt_fonts_dir / "dejavu")
+    except FileExistsError:
+        pass
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 import rclpy
@@ -23,12 +45,12 @@ from rclpy.executors import SingleThreadedExecutor
 class sematic_mapping(Node):
         def __init__(self):
             super().__init__("sematic_mapping")
-            print(f" sim time value:{self.get_parameter("use_sim_time").value}")
+            print(f" sim time value:{self.get_parameter('use_sim_time').value}")
             print("ru")
             # self.image_subscriber=self.create_subscription(Image,"/camera/image_raw",self.callback,10)
             self.bridge=CvBridge()  #converts ros image type to opencv image type(numpy array) , self.bridge is an object of CvBridge class whicih contains several functions for converting images
             self.model=YOLO("yolo11x.pt") #loads trained neural network
-            self.obj_list=[]
+            self.obj_list=[] #(obj,confidence)
             # self.scan_subscriber_=self.create_subscription(LaserScan,"/scan",)
             self.image_sub=Subscriber(self, Image, "/camera/image_raw")
             self.scan_sub=Subscriber(self, LaserScan, "/scan")
@@ -43,9 +65,12 @@ class sematic_mapping(Node):
             self.angle=self.get_parameter("angle").value
             self.declare_parameter("motion",False)
             self.motion=self.get_parameter("motion").value
-            self.partitions=set()
+            self.partitions_set=set()
             self.angle_list=[27,18,11,8,1,358,351,348,341,331]
-
+            self.obj_names_set=set()
+            self.obj_w_distances_list=[] #(obj,distance)
+            self.declare_parameter("x_map",0.0)
+            self.declare_parameter("y_map",0.0)
 
 
 
@@ -55,14 +80,14 @@ class sematic_mapping(Node):
             # print(f"0 deg:{self.ranges[0]} 90 deg:{self.ranges[90]}, 180 deg:{self.ranges[180]} 270 deg:{self.ranges[270]}")
             self.frame=self.bridge.imgmsg_to_cv2(img_msg,desired_encoding="bgr8")   #mag=ros2 image that arrived from the camera feed  (type=senseor_msg.msg.Image),  .imgmsg_to_cv2 is one of the methods(functions) insdie CVBridge object which convert ros image to opencv image , msg=the image we want to convert, desired_encoding="bgr8" measn give output img in BGR format wiht 8 bit per color channel,after conversion it return and opencv image thaat is stored in self.frame
                 # Run YOLO
-            results = self.model(self.frame,conf=0.8,verbose=False)  #this variable stores the detected objects
+            results = self.model(self.frame,conf=0.9,verbose=False)  #this variable stores the detected objects
 
 
             # Get the first (and only) result
             # print(results)
 
             for result in results:
-                annotated_frame = result.plot()
+                annotated_frame = result.plot() 
                 box_centre_x=None
                 for box in result.boxes:
                     x1,y1,x2,y2=box.xyxy[0] #when detects it returns bounding box as box.xyxy=(x1,y1,x2,y2),(x1,y1)= top left corner ,(x2,y2)=botton right corner
@@ -73,6 +98,9 @@ class sematic_mapping(Node):
                     object_name = result.names[class_id]
                     confidence = float(box.conf[0])
 
+
+
+
                     present = False
 
                     for obj, _ in self.obj_list:
@@ -82,8 +110,10 @@ class sematic_mapping(Node):
 
                     if not present:
                         self.obj_list.append((object_name, confidence))
+                        
+                    
 
-            print(self.obj_list)
+            # print(f"object list:{self.obj_list}")
             # #Draw bounding boxes and labels on the detected image
             height,width=annotated_frame.shape[:2]   #finding the size of image(frame),annoted_frame is a numpy array which has .shape property which give (height,width,shape)
             centre_x=width//2 # // because opencv drawing fns expect integers but / gives decimals
@@ -92,32 +122,32 @@ class sematic_mapping(Node):
             cv2.line(annotated_frame,(0,centre_y),(width,centre_y),(0,150,0),2)
             parts = 5
             step = (width // 2) // parts
-            print(f"height:{height} width:{width} centre:{centre_x,centre_y} step:{step}")
+            # print(f"height:{height} width:{width} centre:{centre_x,centre_y} step:{step}")
             
             for i in range(parts):
                 # Left side
                 x = centre_x - i * step
                 cv2.line(annotated_frame, (x, 0), (x, height), (255, 0, 0), 1)
-                self.partitions.add(x)
+                self.partitions_set.add(x)
 
             
                 # Right side
                 if i != 0:
                   x = centre_x + i * step
-                  self.partitions.add(x)
+                  self.partitions_set.add(x)
                   cv2.line(annotated_frame, (x, 0), (x, height), (255, 0, 0), 1)
-            partition_list=list(self.partitions)
+            partition_list=list(self.partitions_set)
             sorted_list=sorted(partition_list)
             edge=[0]+sorted_list+[width]
             text_positions=[]
-            print(f"sorted_list:{sorted_list}")
+            # print(f"sorted_list:{sorted_list}")
             for i in range(len(edge) - 1):
                 left = edge[i]
                 right = edge[i + 1]
                 middle_x = (left + right) // 2
                 middle_y=centre_y//4
                 text_positions.append((middle_x,middle_y))
-            print(f"text_position list:{text_positions}")
+            # print(f"text_position list:{text_positions}")
             for pos, angle in zip(text_positions, self.angle_list):
                     (text_width,text_height),baseline=cv2.getTextSize(
                         str(angle),
@@ -137,128 +167,105 @@ class sematic_mapping(Node):
                         2
                     )
             
-            if box_centre_x is not None:
-               for a in range(len(edge)-1):
-                    if edge[a]<=box_centre_x<edge[a+1]:
-                        cv2.rectangle(
-                            annotated_frame,
-                            (edge[a],0),
-                            (edge[a+1],height),
-                            (0,0,225),
-                            3
-                        )
+
+            for result in results:
+                box_centre_x=None
+                for box in result.boxes:
+                    x1,y1,x2,y2=box.xyxy[0] #when detects it returns bounding box as box.xyxy=(x1,y1,x2,y2),(x1,y1)= top left corner ,(x2,y2)=botton right corner
+                    box_centrex=int((x1+x2)/2)
+                    box_centre_y=int((y1+y2)/2)
+                    class_id = int(box.cls[0])
+                    object_name = result.names[class_id]
+                    confidence = float(box.conf[0])
+                    # self.obj_names_set.add(object_name)
+
+                    if box_centrex is not None:
+                        for a in range(len(edge)-1):
+                                if edge[a]<=box_centrex<edge[a+1]:
+                                    if object_name not in self.obj_names_set:
+                                        # self.obj_names_set.add(object_name)
+                                        theta=math.radians(self.angle_list[a])  #because sin and cos requies radians
+                                        self.ray=self.ranges[self.angle_list[a]]-0.7
+                                        # converting polar(lidar coordinates(distance,angle)) to cartesian(x,y,z)( for TF2)
+                                        self.x=self.ray*math.cos(theta)
+                                        self.y=self.ray*math.sin(theta)
+
+                                        point=PointStamped() #point and header, represent a point in coordinate frame
+                                        point.header.frame_id="base_scan"  #saying these x,y coordinates are measured in base scan frame
+                                        point.header.stamp=scan_msg.header.stamp
+
+                                        point.point.x=self.x #points in current frame
+                                        point.point.y=self.y
+                                        point.point.z=0.0
+
+                                        # print("---------------------")
+                                        # print("Image :", img_msg.header.stamp.sec, img_msg.header.stamp.nanosec)
+                                        # print("Scan  :", scan_msg.header.stamp.sec, scan_msg.header.stamp.nanosec)
+
+                                        try:
+                                            tf = self.tf_buffer.lookup_transform(
+                                                "map", #target_frame(the frame u want to transform into=give poase in map frame)
+                                                "base_scan", #source frame(the fram u have currently)
+                                                # rclpy.time.Time() #get latest transform stored
+                                                rclpy.time.Time.from_msg(scan_msg.header.stamp), #at what time want the transform, askign for transform when the scan came,if it dosent have 
+                                                timeout=rclpy.duration.Duration(seconds=0.2)  #how long to wait it transform isnt available
+                                            )
+                                            point_map=tf2_geometry_msgs.do_transform_point(point,tf)
+                                            x_map=point_map.point.x
+                                            y_map=point_map.point.y
+                                            self.obj_names_set.add(object_name)
+                                            print(f"obj name set list:{self.obj_names_set}")
+                                            self.obj_w_distances_list.append((object_name,self.angle_list[a],(x_map,y_map)))
+
+                                            print(f"object with angle list:{self.obj_w_distances_list}")
 
 
+                                            # print(f"points on map:{(x_map,y_map)}")
+                                        except Exception as e:
+                                                print("exception occured")
 
+                                      
+                                    cv2.rectangle(
+                                        annotated_frame,
+                                        (edge[a],0),
+                                        (edge[a+1],height),
+                                        (0,0,225),
+                                        3
+                                    )
 
-
-
-            # height, width = annotated_frame.shape[:2]
-
-            # centre_x = width // 2
-            # centre_y = height // 2
-
-            # Long enough to reach outside the image
-            length = max(width, height) * 2
-
-            ## displays the annotated image
-
-            print(f"aself.angle:{self.angle}")
-            # self.declare_parameter()
-            theta=math.radians(self.angle)  #because sin and cos requies radians
-            self.ray=self.ranges[self.angle]-0.7
-            # converting polar(lidar coordinates(distance,angle)) to cartesian(x,y,z)( for TF2)
-            self.x=self.ray*math.cos(theta)
-            self.y=self.ray*math.sin(theta)
-
-            point=PointStamped() #point and header, represent a point in coordinate frame
-            point.header.frame_id="base_scan"  #saying these x,y coordinates are measured in base scan frame
-            point.header.stamp=scan_msg.header.stamp
-
-            point.point.x=self.x #points in current frame
-            point.point.y=self.y
-            point.point.z=0.0
-
-            print("---------------------")
-            print("Image :", img_msg.header.stamp.sec, img_msg.header.stamp.nanosec)
-            print("Scan  :", scan_msg.header.stamp.sec, scan_msg.header.stamp.nanosec)
-
-            try:
-                tf = self.tf_buffer.lookup_transform(
-                    "map", #target_frame(the frame u want to transform into=give poase in map frame)
-                    "base_scan", #source frame(the fram u have currently)
-                    # rclpy.time.Time() #get latest transform stored
-                    rclpy.time.Time.from_msg(scan_msg.header.stamp), #at what time want the transform, askign for transform when the scan came,if it dosent have 
-                    timeout=rclpy.duration.Duration(seconds=0.2)  #how long to wait it transform isnt available
-                )
-                point_map=tf2_geometry_msgs.do_transform_point(point,tf)
-                x_map=point_map.point.x
-                y_map=point_map.point.y
-                print(f"points on map:{(x_map,y_map)}")
-
-                self.goal=PoseStamped()
-                self.goal.header.frame_id="map" #tells the coordinates are in map frame
-                self.goal.header.stamp=self.navigator.get_clock().now().to_msg() #time at which this message was created
-                self.goal.pose.position.x=x_map
-                self.goal.pose.position.y=y_map
-                self.goal.pose.orientation.x = 0.0
-                self.goal.pose.orientation.y = 0.0
-                self.goal.pose.orientation.z = 0.0
-                self.goal.pose.orientation.w = 1.0
-                print("sending goal")
-                print(f"send_goal flag={self.send_goal}")
-                if self.send_goal=="send_goal":
-                  if self.motion==True:
+            self.x_map=self.get_parameter("x_map").value
+            self.y_map=self.get_parameter("y_map").value
+            print(f"(x_map,y_map):{self.x_map,self.y_map}")
+            self.goal=PoseStamped()
+            self.goal.header.frame_id="map" #tells the coordinates are in map frame
+            self.goal.header.stamp=self.navigator.get_clock().now().to_msg() #time at which this message was created
+            self.goal.pose.position.x=self.x_map
+            self.goal.pose.position.y=self.y_map
+            self.goal.pose.orientation.x = 0.0
+            self.goal.pose.orientation.y = 0.0
+            self.goal.pose.orientation.z = 0.0
+            self.goal.pose.orientation.w = 1.0
+            # print("sending goal")
+            # print(f"send_goal flag={self.send_goal}")
+            if self.send_goal=="send_goal":
+                if self.motion==True:
                    self.navigator.goToPose(self.goal)
-                  self.send_goal="goal_sent"
-                if self.send_goal=="goal_sent":
-                    check=self.navigator.isTaskComplete()
-                    if check==True:
-                      self.send_goal="stop"
+                   self.send_goal="goal_sent"
+            if self.send_goal=="goal_sent":
+                check=self.navigator.isTaskComplete()
+                if check==True:
+                    self.send_goal="stop"
 
                 result=self.navigator.getResult()
                 print(f"result:{result}")
-                # print(f"task info:{check}")
-                # while not self.navigator.isTaskComplete():
-                #     pass
-                # result=self.navigator.getResult()
-                # print(result)
 
-
-
-                print("Latest TF :", tf.header.stamp.sec, tf.header.stamp.nanosec)
-            except Exception as e:
-                print(e)
+            # print("Latest TF :", tf.header.stamp.sec, tf.header.stamp.nanosec)
+    
 
             
             cv2.imshow("YOLO Detection", annotated_frame)
             cv2.waitKey(1)
 
-
-
-        
-        
-
-        # # results=model("/home/jay/turtlebot3_ws/src/nav2_pkg/nav2_pkg/parts-80-1.avif")
-        # results=model(source=1,stream=True,conf=0.5)
-        # # print(results)
-        # # result = results[0]   # Get the result for the first (and only) image
-        # # results = model("/home/jay/Downloads/video.mp4", stream=True)
-
-        # for result in results:
-        #     # print(result)
-        #     annoted_frame=result.plot()
-
-        #     cv2.imshow("YOLO Detection",annoted_frame)
-
-        #     for box in result.boxes:
-        #         class_id = int(box.cls[0])
-        #         confidence = float(box.conf[0])
-        #         print(result.names[class_id], confidence)
-
-        #     if cv2.waitKey(1)==ord('q'):
-        #         break
-        
 def main(args=None):
      rclpy.init(args=args)
      node=sematic_mapping()
