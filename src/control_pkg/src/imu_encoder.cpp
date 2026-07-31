@@ -42,6 +42,8 @@ private:
         double theta_enc_rad=0.0;  // heading from wheel encoders
         double theta_imu_rad=0.0;  // heading from imu gyro
 
+        double theta_fused_rad=0.0;
+
         double dt=0.02; //as timer callback is 20ms
 
         double x=0.0;
@@ -99,6 +101,25 @@ private:
             // printf("(x,y):%.2f,%.2f | Yaw:%.2f ",gt_x_,gt_y_,gt_yaw_);
         }
 
+        double normalizeAngle(double angle)
+        {
+            if (angle> M_PI)
+            {
+                angle-=2.0*M_PI;
+            }
+            else if (angle < -M_PI)
+            {
+                angle += 2.0*M_PI;
+            }
+            return angle;
+        }
+
+        double toDegrees(double angle)
+        {
+            angle=angle*180.0/M_PI;
+            return angle;
+        }
+
         void timer_callback()
         {   
 
@@ -118,35 +139,29 @@ private:
             double distance=(left_distance+right_distance)/2.0;
 
             double delta_theta=(right_distance-left_distance)/wheel_base;  //how much turned between callback
+
             theta_enc_rad+=delta_theta;
-            if (theta_enc_rad>M_PI)
-                theta_enc_rad-=2.0*M_PI;
-            else if (theta_enc_rad<-M_PI)
-            {
-                theta_enc_rad+=2.0*M_PI;
-            }
+            theta_enc_rad=normalizeAngle(theta_enc_rad);
             
-            
-            
-            double theta_enc_deg=theta_enc_rad*180.0/M_PI;
+            double theta_enc_deg=toDegrees(theta_enc_rad);
             
             double delta_theta_imu = angular_velocity_z_ * dt;  //how much robot rotated between the callbacks (here 0.02sec)
             theta_imu_rad+=delta_theta_imu; //add timy rotations to get total rotations
-            
-            if (theta_imu_rad>M_PI)
-                theta_imu_rad-=2.0*M_PI;
-            else if (theta_imu_rad<-M_PI)
-            {
-                theta_imu_rad+=2.0*M_PI;
-            }
-            double theta_imu_deg=theta_imu_rad*180.0/M_PI;
+            theta_imu_rad=normalizeAngle(theta_imu_rad);
+            double theta_imu_deg=toDegrees(theta_imu_rad);
 
             
-            double al=0.90;
-            double theta_fused_rad= ( al*theta_enc_rad ) + ( (1-al) * theta_imu_rad);
-            double theta_fused_deg=theta_fused_rad*180.0/M_PI;
+            double alpha=0.50;
+
+            theta_fused_rad=theta_fused_rad+delta_theta_imu;   // Prediction  adding gyro reading to previous fused estimate
+            theta_fused_rad=normalizeAngle(theta_fused_rad);
+            theta_fused_rad=( alpha*theta_fused_rad + ( (1.0-alpha)*theta_enc_rad));  // Correction 
+            theta_fused_rad=normalizeAngle(theta_fused_rad);
+            double theta_fused_deg=toDegrees(theta_fused_rad);
+
             double error_normal=theta_imu_deg-theta_enc_deg;
             double error_fused=gt_yaw_-theta_fused_deg;
+            
 
  
             // double 
