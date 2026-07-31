@@ -5,6 +5,8 @@
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2/LinearMath/Matrix3x3.h"
 #include "tf2_msgs/msg/tf_message.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+
 
 
 
@@ -18,6 +20,7 @@ public:
             imu_sub_=this->create_subscription<sensor_msgs::msg::Imu>("/imu", 10, std::bind(&ImuEncoderFusion::imu_callback, this, std::placeholders::_1));
             actual_info_sub_=this->create_subscription<tf2_msgs::msg::TFMessage>("/gt_tf", 10, std::bind(&ImuEncoderFusion::actual_info_callback, this, std::placeholders::_1));
             timer_=this->create_wall_timer( std::chrono::milliseconds(20), std::bind(&ImuEncoderFusion::timer_callback, this));
+            odom_pub_=this->create_publisher<nav_msgs::msg::Odometry>("/wheel_odom",10);
         }
 private:
         
@@ -35,7 +38,11 @@ private:
         double gt_yaw_=0.0;
 
         double wheel_base=0.175;
-        double theta=0.0;
+
+        double theta_enc_rad=0.0;  // heading from wheel encoders
+        double theta_imu_rad=0.0;  // heading from imu gyro
+
+        double dt=0.02; //as timer callback is 20ms
 
         double x=0.0;
         double y=0.0;
@@ -111,15 +118,65 @@ private:
             double distance=(left_distance+right_distance)/2.0;
 
             double delta_theta=(right_distance-left_distance)/wheel_base;  //how much turned between callback
-            theta+=delta_theta;
-            double theta_degree=theta*180.0/M_PI;
+            theta_enc_rad+=delta_theta;
+            if (theta_enc_rad>M_PI)
+                theta_enc_rad-=2.0*M_PI;
+            else if (theta_enc_rad<-M_PI)
+            {
+                theta_enc_rad+=2.0*M_PI;
+            }
+            
+            
+            
+            double theta_enc_deg=theta_enc_rad*180.0/M_PI;
+            
+            double delta_theta_imu = angular_velocity_z_ * dt;  //how much robot rotated between the callbacks (here 0.02sec)
+            theta_imu_rad+=delta_theta_imu; //add timy rotations to get total rotations
+            
+            if (theta_imu_rad>M_PI)
+                theta_imu_rad-=2.0*M_PI;
+            else if (theta_imu_rad<-M_PI)
+            {
+                theta_imu_rad+=2.0*M_PI;
+            }
+            double theta_imu_deg=theta_imu_rad*180.0/M_PI;
 
+            
+            double al=0.90;
+            double theta_fused_rad= ( al*theta_enc_rad ) + ( (1-al) * theta_imu_rad);
+            double theta_fused_deg=theta_fused_rad*180.0/M_PI;
+            double error_normal=theta_imu_deg-theta_enc_deg;
+            double error_fused=gt_yaw_-theta_fused_deg;
+
+ 
             // double 
-            x+=distance*cos(theta);
-            y+=distance*sin(theta);
-            printf("left:%.2f | right:%.2f | old_left:%.2f | old_right:%.2f | Dleft:%.2f | Dright:%.2f | ang_vel:%.2f | real (x,y):%.2f,%.2f | cal(x,y):%.2f,%.2f| yaw:%.2f | distance:%.4f | dtheta:%.2f | theta:%.2f\n",left_wheel_, right_wheel_, left_wheel_old, right_wheel_old, delta_left, delta_right, angular_velocity_z_, gt_x_ , gt_y_, x, y, gt_yaw_, distance, delta_theta, theta_degree);
+            x+=distance*cos(theta_enc_rad);
+            y+=distance*sin(theta_enc_rad);
+            // printf("left:%.2f | right:%.2f | old_left:%.2f | old_right:%.2f | Dleft:%.2f | Dright:%.2f | ang_vel:%.2f | real (x,y):%.2f,%.2f | cal(x,y):%.2f,%.2f| yaw:%.2f | distance:%.4f | dtheta:%.2f | theta:%.2f\n",left_wheel_, right_wheel_, left_wheel_old, right_wheel_old, delta_left, delta_right, angular_velocity_z_, gt_x_ , gt_y_, x, y, gt_yaw_, distance, delta_theta, theta_degree);
+            printf(" ang_vel:%.2f | real (x,y):%.2f,%.2f | cal(x,y):%.2f,%.2f| yaw_real:%.2f | theta_enc:%.2f | theta_imu:%.2f |theta_fused:%.2f | error_n:%.2f | error_f:%.2f\n",angular_velocity_z_, gt_x_ , gt_y_, x, y, gt_yaw_,theta_enc_deg, theta_imu_deg,theta_fused_deg, error_normal,error_fused);
             left_wheel_old=left_wheel_;
             right_wheel_old=right_wheel_;
+
+            nav_msgs::msg::Odometry odom;
+            odom.header.stamp=this->get_clock()->now();
+
+            odom.header.frame_id="odom";
+            odom.child_frame_id="base_link";
+
+            odom.pose.pose.position.x=x;
+            odom.pose.pose.position.y=y;
+            odom.pose.pose.position.z=0.0;
+
+            tf2::Quaternion a;
+            a.setRPY(0,0,theta_enc_rad);
+
+            odom.pose.pose.orientation.x=a.x();
+            odom.pose.pose.orientation.y=a.y();
+            odom.pose.pose.orientation.z=a.z();
+            odom.pose.pose.orientation.w=a.w();
+            odom_pub_->publish(odom);
+
+
             
         }
 
@@ -127,6 +184,7 @@ private:
         rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
         rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
         rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr actual_info_sub_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
         rclcpp::TimerBase::SharedPtr timer_;
 
     
