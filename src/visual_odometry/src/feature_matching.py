@@ -1,5 +1,6 @@
 import os
 import cv2
+import numpy as np
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,24 +41,69 @@ for pair in matches:
     best=pair[0]
     second=pair[1]
 
-    if best.distance<0.75*second.distance:
+    if best.distance<0.8*second.distance:
+
         good_matches.append(best)
 
-for match in good_matches[:10]:
+
+points1=[]
+points2=[]
+
+for match in good_matches:
 
     kp1 = keypoints1[match.queryIdx]
     kp2 = keypoints2[match.trainIdx]
 
+    points1.append(kp1.pt)
+    points2.append(kp2.pt)
+
     x1, y1 = kp1.pt
     x2, y2 = kp2.pt
 
-    print(
-        f"Image 1: ({x1:.1f}, {y1:.1f}) "
-        f"-> Image 2: ({x2:.1f}, {y2:.1f}) "
-        f"distance={match.distance:.1f}"
-    )
+points1=np.float32(points1)
+points2=np.float32(points2)
 
-    
+K = np.array([
+    [381.3611602783203, 0.0, 320.0],
+    [0.0, 381.361141204834, 240.0],
+    [0.0, 0.0, 1.0]
+], dtype=np.float64)
+
+
+E, mask=cv2.findEssentialMat(
+    points1,
+    points2,
+    K,
+    method=cv2.RANSAC
+)
+
+_,R,t,mask_pose=cv2.recoverPose(
+    E,
+    points1,
+    points2,
+    K
+)
+
+print("Rotation:")
+print(R)
+
+print("Translation direction:")
+print(t)
+
+print("Essential Matrix:")
+print(E)
+
+print("Inliers:", np.sum(mask))
+print("Total points:", len(points1))
+
+
+    # print(
+    #     f"Image 1: ({x1:.1f}, {y1:.1f}) "
+    #     f"-> Image 2: ({x2:.1f}, {y2:.1f}) "
+    #     f"distance={match.distance:.1f}"
+    # )
+
+
 match_image=cv2.drawMatches(
     image1,
     keypoints1,
