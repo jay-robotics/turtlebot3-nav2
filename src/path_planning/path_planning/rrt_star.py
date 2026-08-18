@@ -108,34 +108,18 @@ def nearby_nodes(tree,random_x,random_y,radius):
         distance=nearest_point(node_x,node_y, random_x,random_y)
         if distance<=radius:
             points_near_random.append((node_x,node_y))
+            # plt.scatter(random_x, random_y, s=50, marker="x")
+            # radiu=1.0
+            # circle=plt.Circle(
+            #     (random_x, random_y),
+            #     radiu,
+            #     fill=False
+            #     )
 
-            start_to_node_cost=0
-            parent_node_x=tree[index][0]
-            parent_node_y=tree[index][1]
-            child_node_x=node_x
-            child_node_y=node_y
-            while not (parent_node_x==tree[0][0] and parent_node_y==tree[0][1]):
-                distance_btw_node=nearest_point(parent_node_x,parent_node_y,child_node_x,child_node_y)
-                start_to_node_cost+=distance
-                
-                
+            # plt.gca().add_patch(circle)
 
-    
-
-
-
-            plt.scatter(random_x, random_y, s=50, marker="x")
-            radiu=1.0
-            circle=plt.Circle(
-                (random_x, random_y),
-                radiu,
-                fill=False
-                )
-
-            plt.gca().add_patch(circle)
-
-            plt.axis("equal")
-            plt.draw()
+            # plt.axis("equal")
+            # plt.draw()
 
             
         else:
@@ -233,28 +217,107 @@ while(i<500):
         node_with_distance[near_node]=distance1
 
     print(f"node with distance list:{node_with_distance}")
+
+    if not node_with_distance:
+        continue
     min_node=min(node_with_distance, key=node_with_distance.get)
     min_distance=node_with_distance[min_node]
+    min_node_x=min_node[0]
+    min_node_y=min_node[1]
+    parent_collision_free=collision_free(
+        min_node_x,
+        min_node_y,
+        x,
+        y
+    )
+
     
 
 
-    if is_collision_free:
-        tree.append((min_node[0],min_node[1],x,y))
-        xs+=[nearest_point_p_x,x,None]
-        ys+=[nearest_point_p_y,y,None]
-        line.set_data(xs,ys)
-        if (distance(x,y,goal[0],goal[1])<0.2):
+    # if parent_collision_free:
+    #     tree.append((min_node[0],min_node[1],x,y))
+    #     xs+=[min_node[0],x,None]
+    #     ys+=[min_node[1],y,None]
+    #     line.set_data(xs,ys)
+    #     if (distance(x,y,goal[0],goal[1])<0.2):
+    #         print("goal reached")
+
+
+    if parent_collision_free:
+        tree.append((min_node[0], min_node[1], x, y))
+
+        # Rewire nearby nodes through X
+        for near_node in nearbyy_nodes:
+
+            near_node_x = near_node[0]
+            near_node_y = near_node[1]
+
+            # Cost from START to X + X to nearby node
+            new_cost = min_distance + nearest_point(
+                x, y,
+                near_node_x, near_node_y
+            )
+
+            # Calculate current cost from START to nearby node
+            current_cost = 0
+            child_x = near_node_x
+            child_y = near_node_y
+
+            while not (child_x == tree[0][2] and child_y == tree[0][3]):
+
+                for node in tree:
+                    parent_x = node[0]
+                    parent_y = node[1]
+                    node_x = node[2]
+                    node_y = node[3]
+
+                    if node_x == child_x and node_y == child_y:
+                        current_cost += nearest_point(
+                            parent_x, parent_y,
+                            node_x, node_y
+                        )
+
+                        child_x = parent_x
+                        child_y = parent_y
+                        break
+
+            # Is X a cheaper parent?
+            if new_cost < current_cost:
+
+                # Is X -> nearby node collision-free?
+                if collision_free(
+                    x, y,
+                    near_node_x, near_node_y
+                ):
+
+                    # Change nearby node's parent to X
+                    for i, node in enumerate(tree):
+                        if node[2] == near_node_x and node[3] == near_node_y:
+                            tree[i] = (
+                                x, y,
+                                near_node_x, near_node_y
+                            )
+                            break
+
+        xs += [min_node[0], x, None]
+        ys += [min_node[1], y, None]
+
+        line.set_data(xs, ys)
+
+        if distance(x, y, goal[0], goal[1]) < 0.2:
             print("goal reached")
-            break
+            # break
 
 
     ax.relim()
     ax.autoscale_view()
-    plt.pause(0.1)
+    plt.pause(0.01)
     # print(f" Points:{points} Target:{(target_x,target_y)} Nearest point:{(nearest_point_p)} Distance:{best_distance} Selected point:{(x,y)} Collision:{collision} Tree:{tree} len:{len(tree)}")
     i+=1
 
 plt.ioff()
+
+print("tree",tree)
 
 
 #find path
