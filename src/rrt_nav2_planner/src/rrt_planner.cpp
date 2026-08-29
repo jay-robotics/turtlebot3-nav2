@@ -78,8 +78,11 @@ Point randomPointGenerator() {
 }
 
 // forward declaration
-bool collisionFree(double x, double y, double xGoal, double yGoal,
-                    const std::vector<Obstacle>& obstacles);
+bool collisionFree(double x, double y, double xGoal, double yGoal);
+
+bool pointCollision(
+    double x,
+    double y);
 
 // ---------------------------------------------------------------------------
 // check if the straight line between two points collides with any obstacle
@@ -87,18 +90,15 @@ bool collisionFree(double x, double y, double xGoal, double yGoal,
 // ---------------------------------------------------------------------------
 bool collisionFree(double x, double y,
                     double xGoal, double yGoal,
-                    const std::vector<Obstacle>& obstacles)
+                  )
 {
     for (int i = 0; i <= 100; i++) {
         double t = i / 100.0;
         double lineX = x + t * (xGoal - x);
         double lineY = y + t * (yGoal - y);
 
-        for (const auto& ob : obstacles) {
-            double xmin = ob.xmin, xmax = ob.xmax, ymin = ob.ymin, ymax = ob.ymax;
-            if (xmin <= lineX && lineX <= xmax && ymin <= lineY && lineY <= ymax) {
-                return false;
-            }
+        if(pointCollision(lineX, lineY)){
+            return false;
         }
     }
     return true;
