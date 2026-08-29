@@ -11,7 +11,35 @@ find_package(nav2_core REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+
+add_library(rrt_nav2_planner SHARED
+  src/rrt_planner.cpp
 )
+
+target_include_directories(rrt_nav2_planner PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(rrt_nav2_planner
+  nav2_core
+  pluginlib
+  nav_msgs
+  geometry_msgs
+)
+
+install(
+  TARGETS rrt_nav2_planner
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
+
 
 
 if(BUILD_TESTING)
