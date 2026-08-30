@@ -1,0 +1,7 @@
+<library path="rrt_nav2_planner">
+  <class name="rrt_nav2_planner/RRTPlanner"
+         type="rrt_nav2_planner::RRTPlanner"
+         base_class_type="nav2_core::GlobalPlanner">
+    <description>RRT-based global planner for Nav2</description>
+  </class>
+</library>

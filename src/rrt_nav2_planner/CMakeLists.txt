@@ -11,9 +11,14 @@ find_package(nav2_core REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav2_costmap_2d REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(tf2_ros REQUIRED)  
 
 add_library(rrt_nav2_planner SHARED
   src/rrt_planner.cpp
+
 )
 
 target_include_directories(rrt_nav2_planner PUBLIC
@@ -26,7 +31,16 @@ ament_target_dependencies(rrt_nav2_planner
   pluginlib
   nav_msgs
   geometry_msgs
+  nav2_costmap_2d  
+  rclcpp
+  rclcpp_lifecycle
+  tf2_ros
 )
+
+
+pluginlib_export_plugin_description_file(nav2_core plugin.xml)
+
+
 
 install(
   TARGETS rrt_nav2_planner

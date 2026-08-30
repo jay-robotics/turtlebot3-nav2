@@ -1,5 +1,35 @@
+/*
+ * RRT (Rapidly-exploring Random Tree) Path Planner - C++ port
+ * ------------------------------------------------------------
+ * Direct translation of the original Python RRT script, now refactored so
+ * that the RRT search itself lives in one function (planRRT) and the final
+ * curve smoothing lives in another (smoothPathPCHIP), instead of both being
+ * written directly in main(). main() now just calls the two in sequence.
+ * This mirrors the shape createPlan() will eventually need to have in a
+ * Nav2 GlobalPlanner plugin.
+ *
+ * CHANGES vs. the previous version (flagged explicitly, not silent):
+ *   1. planRRT() and smoothPathPCHIP() are new - they contain code that used
+ *      to sit directly in main().
+ *   2. `best_distance` is no longer a global variable read implicitly by
+ *      steer(). It is now passed into steer() as an explicit parameter.
+ *      This was a bug-ish quirk in the original Python (and in the first
+ *      C++ port). It had to be fixed here because planRRT() needs to be a
+ *      self-contained, reusable function - relying on a mutable global for
+ *      its internal state would break the moment it's called more than
+ *      once (which Nav2 will do, once per planning request).
+ *   3. `tree` and `goal` are no longer globals - `tree` is now local to
+ *      planRRT(), and `goal`/`start` are passed in as parameters.
+ *   4. The leftover unused `start` vector at the bottom of the original
+ *      main() (dead code that only fed the removed plotting) is renamed to
+ *      `legacyUnusedPoints` to avoid clashing with the new `start` Point
+ *      parameter used for planning.
+ * No other logic was changed - collision checking, steering, backtracking,
+ * shortcutting, and the PCHIP math are identical to before.
+ *
+ * Compile with:  g++ -std=c++17 -O2 rrt_planner_refactored.cpp -o rrt_planner
+ */
 
-#include "rrt_nav2_planner/rrt_planner.hpp"
 #include <iostream>
 #include <vector>
 #include <cmath>
@@ -8,10 +38,15 @@
 #include <algorithm>
 #include <limits>
 
-namespace rrt_nav2_planner
-{
+// ---------------------------------------------------------------------------
+// Data structures
+// ---------------------------------------------------------------------------
 
 // A simple 2D point (x, y)
+struct Point {
+    double x;
+    double y;
+};
 
 // An RRT tree node: stores the parent coordinates and this node's coordinates
 struct TreeNode {
@@ -21,13 +56,33 @@ struct TreeNode {
     double y;
 };
 
+// Axis-aligned rectangle obstacle (xmin, xmax, ymin, ymax)
+struct Obstacle {
+    double xmin;
+    double xmax;
+    double ymin;
+    double ymax;
+};
 
+// ---------------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------------
+// NOTE: `obstacles` stays global for now (this is what your world/costmap
+// data would replace later in Nav2). `tree`, `goal`, and `best_distance`
+// used to be globals too, but have been moved to be local to planRRT()
+// (see the CHANGES note above).
+// ---------------------------------------------------------------------------
 
-
+std::vector<Obstacle> obstacles = {
+    {4, 6, 3, 6},
+    {7, 8.5, 7, 9},
+    {1, 2, 6, 8}
+};
 
 // random number generation, replacing python's `random` module
 std::mt19937 rng(std::random_device{}());
 std::uniform_real_distribution<double> uniform01(0.0, 1.0);
+std::uniform_real_distribution<double> uniform0to10(0.0, 10.0);
 
 // ---------------------------------------------------------------------------
 // round a double to 2 decimal places (mirrors python's round(x, 2))
@@ -43,39 +98,46 @@ double distanceFn(double x1, double y1, double x2, double y2) {
     return std::hypot(x2 - x1, y2 - y1);
 }
 
+// distance between two points - kept as a separate function to mirror the
+// original python code's near-duplicate helper.
 double nearestPoint(double x, double y, double xGoal, double yGoal) {
     return std::sqrt((xGoal - x) * (xGoal - x) + (yGoal - y) * (yGoal - y));
 }
 
 // ---------------------------------------------------------------------------
 // generate a random point in [0,10] x [0,10], rounded to 2 decimals
-//
-// NOTE: this range is a leftover from the original standalone script's fixed
-// 10x10 test world. For real use against a costmap, this should sample
-// within the costmap's actual bounds instead - flagged here since it's easy
-// to miss (RRT will never find anything outside the [0,10]x[0,10] box).
 // ---------------------------------------------------------------------------
-Point randomPointGenerator(double xmin, double xmax, double ymin, double ymax) {
-    double x = round2(xmin + uniform01(rng) * (xmax - xmin));
-    double y = round2(ymin + uniform01(rng) * (ymax - ymin));
+Point randomPointGenerator() {
+    double x = round2(uniform0to10(rng));
+    double y = round2(uniform0to10(rng));
     return {x, y};
 }
 
+// forward declaration (steer() calls collisionFree())
+bool collisionFree(double x, double y, double xGoal, double yGoal,
+                    double xminDefault = 4, double xmaxDefault = 6,
+                    double yminDefault = 3, double ymaxDefault = 7);
+
 // ---------------------------------------------------------------------------
 // check if the straight line between two points collides with any obstacle
-// rectangle.
+// rectangle. The default parameters are dead code (shadowed by the for-loop
+// over the global `obstacles` list) - same as the original python function.
 // ---------------------------------------------------------------------------
-bool RRTPlanner::collisionFree(double x, double y,
-                    double xGoal, double yGoal
-)
-{
+bool collisionFree(double x, double y, double xGoal, double yGoal,
+                    double xminDefault, double xmaxDefault,
+                    double yminDefault, double ymaxDefault) {
+    (void)xminDefault; (void)xmaxDefault; (void)yminDefault; (void)ymaxDefault;
+
     for (int i = 0; i <= 100; i++) {
         double t = i / 100.0;
         double lineX = x + t * (xGoal - x);
         double lineY = y + t * (yGoal - y);
 
-        if(pointCollision(lineX, lineY)){
-            return false;
+        for (const auto& ob : obstacles) {
+            double xmin = ob.xmin, xmax = ob.xmax, ymin = ob.ymin, ymax = ob.ymax;
+            if (xmin <= lineX && lineX <= xmax && ymin <= lineY && lineY <= ymax) {
+                return false;
+            }
         }
     }
     return true;
@@ -83,25 +145,12 @@ bool RRTPlanner::collisionFree(double x, double y,
 
 // ---------------------------------------------------------------------------
 // check whether a single point lies inside any obstacle rectangle
-// FIXED: takes obstacles by const reference (was a non-const `&`, which
-// would refuse to bind to the const vectors passed everywhere else).
 // ---------------------------------------------------------------------------
-
-
-bool RRTPlanner::pointCollision(double x, double y) {
-    unsigned int mx;  //world cells
-    unsigned int my;
-
-    if (!costmap_ros_->getCostmap()->worldToMap(x,y,mx,my)){    //costmap_ros_->getCostmap() gives actual Costmap2d, .worldToMao(x,y,mx,my) convert RRT world corrdinates into a costmap cell, takes x,y and fills mx,my
-        return true;  //if (x,y) cannot be converted to valid costmap cell then return true
-    }
-
-    //get cost of the cell
-    unsigned char cost = costmap_ros_->getCostmap()->getCost(mx, my);
-
-
-    if (cost>=nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE){     //inscribed.... has cost 253 ,so we reject cells with cost 253, ane 254
-        return true;
+bool pointCollision(double x, double y) {
+    for (const auto& ob : obstacles) {
+        if (ob.xmin <= x && x <= ob.xmax && ob.ymin <= y && y <= ob.ymax) {
+            return true;
+        }
     }
     return false;
 }
@@ -109,11 +158,11 @@ bool RRTPlanner::pointCollision(double x, double y) {
 // ---------------------------------------------------------------------------
 // if the target is further than step_size away, "steer" towards it by
 // step_size; otherwise go straight to it. Returns (x, y, isCollisionFree)
-// FIXED: both collisionFree() calls now consistently use the `obstacles`
-// parameter (one previously referenced a nonexistent `obstacle`/`obstacles`
-// typo depending on version).
+//
+// CHANGED: bestDistance is now an explicit parameter instead of being read
+// from a global. Same math as before, just no longer relying on outer scope.
 // ---------------------------------------------------------------------------
-std::tuple<double, double, bool> RRTPlanner::steer(double x, double y, double xGoal, double yGoal,
+std::tuple<double, double, bool> steer(double x, double y, double xGoal, double yGoal,
                                         double stepSize, double bestDistance) {
     if (bestDistance <= stepSize) {
         bool collision = collisionFree(x, y, xGoal, yGoal);
@@ -135,7 +184,7 @@ std::tuple<double, double, bool> RRTPlanner::steer(double x, double y, double xG
 }
 
 // ---------------------------------------------------------------------------
-// Bezier / corner-rounding smoothing helpers
+// Bezier / corner-rounding smoothing helpers (unchanged from before)
 // ---------------------------------------------------------------------------
 
 std::pair<Point, Point> perpendicularPoints(double Ax, double Ay, double Bx, double By,
@@ -183,9 +232,7 @@ std::vector<Point> findSmoothPath(const Point& A, const Point& B, const Point& C
     return smoothPathPts;
 }
 
-// FIXED: now takes `obstacles` as a parameter (was reading a nonexistent
-// global) and forwards it to collisionFree().
-bool RRTPlanner::checkIfSmoothPathCollide(const std::vector<Point>& smoothPathPts) {
+bool checkIfSmoothPathCollide(const std::vector<Point>& smoothPathPts) {
     for (size_t i = 0; i + 1 < smoothPathPts.size(); i++) {
         bool isCollisionFree = collisionFree(smoothPathPts[i].x, smoothPathPts[i].y,
                                               smoothPathPts[i + 1].x, smoothPathPts[i + 1].y);
@@ -197,11 +244,7 @@ bool RRTPlanner::checkIfSmoothPathCollide(const std::vector<Point>& smoothPathPt
     return false;
 }
 
-// FIXED: now takes `obstacles` as a parameter and forwards it to every
-// pointCollision()/checkIfSmoothPathCollide() call inside (there were
-// several - one per candidate curve: sPath, pPlusPath, pMinusPath).
-std::vector<Point> RRTPlanner::smoothPathBezier(const std::vector<Point>& path,
-                                     double rounding, int curvePoints) {
+std::vector<Point> smoothPathBezier(const std::vector<Point>& path, double rounding = 1.0, int curvePoints = 30) {
     if (path.size() < 3) {
         return path;
     }
@@ -267,7 +310,7 @@ std::vector<Point> RRTPlanner::smoothPathBezier(const std::vector<Point>& path,
 
 // ---------------------------------------------------------------------------
 // PCHIP interpolation (Fritsch-Carlson monotone cubic Hermite method,
-// matching scipy.interpolate.PchipInterpolator)
+// matching scipy.interpolate.PchipInterpolator - see earlier verification)
 // ---------------------------------------------------------------------------
 
 std::vector<double> pchipSlopes(const std::vector<double>& t, const std::vector<double>& y) {
@@ -340,32 +383,40 @@ std::vector<double> pchipInterpolate(const std::vector<double>& t, const std::ve
 }
 
 // ===========================================================================
-// planRRT() - THE RRT PLANNER
-// Input:  start, goal, obstacles (+ tuning params with defaults)
-// Output: shortcut waypoint path from start to goal
+// planRRT() - THE RRT PLANNER, now a standalone function.
+//
+// Input:
+//   start          - starting point of the search
+//   goal           - target point to reach
+//   maxIterations  - how many sampling iterations to attempt (default 500)
+//   stepSize       - how far each steer() step advances toward the target
+//   goalTolerance  - how close a new node must get to `goal` to stop early
+//
+// Output:
+//   A std::vector<Point> - the SHORTCUT path from start to goal (i.e. the
+//   raw tree-search path with redundant waypoints removed by the greedy
+//   collision-free shortcutting pass). This is the path that gets handed
+//   to smoothPathPCHIP() afterwards. If no path is found within
+//   maxIterations, this returns whatever path leads to the last tree node
+//   added (may not reach the goal).
 // ===========================================================================
-std::vector<Point> RRTPlanner::planRRT(const Point& start, const Point& goal,
-                            int maxIterations, double stepSize,
-                            double goalTolerance) {
+std::vector<Point> planRRT(const Point& start, const Point& goal,
+                            int maxIterations = 500, double stepSize = 1.0,
+                            double goalTolerance = 0.2) {
+    // tree is now local to this function (was global before)
     std::vector<TreeNode> tree = { {start.x, start.y, start.x, start.y} };
-
-    // get world grid in xy forms so randompointGeneratoe only samples points that actually exist on the map
-    auto* costmap=costmap_ros_->getCostmap();
-    double xmin = costmap->getOriginX();
-    double ymin = costmap->getOriginY();
-    double xmax = xmin + costmap->getSizeInCellsX() * costmap->getResolution();
-    double ymax = ymin + costmap->getSizeInCellsY() * costmap->getResolution();
-    
 
     int i = 0;
     while (i < maxIterations) {
         Point target;
+        // 10% of the time, sample the goal directly (goal biasing)
         if (uniform01(rng) <= 0.1) {
             target = goal;
         } else {
-            target = randomPointGenerator(xmin, xmax, ymin, ymax);
+            target = randomPointGenerator();
         }
 
+        // find the point already in the tree that is nearest to the target
         double bestDistance = std::numeric_limits<double>::infinity();
         Point nearestPointP{0, 0};
         double targetX = target.x;
@@ -377,13 +428,14 @@ std::vector<Point> RRTPlanner::planRRT(const Point& start, const Point& goal,
             double d = nearestPoint(x, y, targetX, targetY);
             if (d < bestDistance) {
                 bestDistance = d;
-                nearestPointP = {x,y};
+                nearestPointP = {x, y};
             }
         }
 
         double nearestPointPX = nearestPointP.x;
         double nearestPointPY = nearestPointP.y;
 
+        // NOTE: bestDistance is now passed explicitly (see steer() above)
         auto [x, y, collision] = steer(nearestPointPX, nearestPointPY, targetX, targetY,
                                         stepSize, bestDistance);
 
@@ -406,6 +458,9 @@ std::vector<Point> RRTPlanner::planRRT(const Point& start, const Point& goal,
         i++;
     }
 
+    // -----------------------------------------------------------------
+    // Backtrack from the last added tree node to the start, building `path`
+    // -----------------------------------------------------------------
     double treeLastX = tree.back().x;
     double treeLastY = tree.back().y;
     std::vector<Point> path = { {treeLastX, treeLastY} };
@@ -425,7 +480,12 @@ std::vector<Point> RRTPlanner::planRRT(const Point& start, const Point& goal,
 
     std::reverse(path.begin(), path.end());
 
+    // -----------------------------------------------------------------
+    // Shortcut the path: greedily jump to the furthest waypoint reachable
+    // by a straight, collision-free line.
+    // -----------------------------------------------------------------
     std::vector<Point> newPath;
+
     double mainX = path[0].x;
     double mainY = path[0].y;
 
@@ -453,7 +513,15 @@ std::vector<Point> RRTPlanner::planRRT(const Point& start, const Point& goal,
 }
 
 // ===========================================================================
-// smoothPathPCHIP() - final curve smoothing pass
+// smoothPathPCHIP() - THE FINAL CURVE SMOOTHING PASS.
+//
+// Input:
+//   path - a std::vector<Point> waypoint path (typically planRRT()'s output)
+//
+// Output:
+//   A std::vector<Point> - a densely-sampled (200 points), smooth curve
+//   running through the same waypoints, computed via monotone cubic
+//   Hermite (PCHIP) interpolation over both x(t) and y(t).
 // ===========================================================================
 std::vector<Point> smoothPathPCHIP(const std::vector<Point>& path, int numFine = 200) {
     std::vector<double> xVals, yVals, tVals;
@@ -478,103 +546,46 @@ std::vector<Point> smoothPathPCHIP(const std::vector<Point>& path, int numFine =
     return result;
 }
 
-// ===========================================================================
-// buildObstaclesFromCostmap() - NEW.
-// Converts occupied cells in the live Nav2 costmap into the Obstacle
-// rectangles that collisionFree()/pointCollision() expect, so planRRT() can
-// be reused unchanged against real sensor data instead of a hardcoded list.
-//
-// NOTE: this uses the standard nav2_costmap_2d::Costmap2D API
-// (getSizeInCellsX/Y, getCost, mapToWorld, LETHAL_OBSTACLE/INSCRIBED_INFLATED
-// constants). It has NOT been compiled against real Nav2 headers in this
-// environment (ROS 2/Nav2 isn't installed here) - double check it builds
-// against your actual nav2_costmap_2d version, and treat this function as a
-// starting point rather than a verified drop-in.
-//
-// This emits one small rectangle per occupied cell, which is correct but not
-// efficient for a dense costmap - if collisionFree() ends up too slow, the
-// better long-term fix is to have collisionFree()/pointCollision() query
-// costmap_ros_->getCostmap()->getCost(...) directly instead of building an
-// Obstacle list at all.
-// ===========================================================================
-
-
 // ---------------------------------------------------------------------------
-// RRTPlanner lifecycle methods
+// main - now just calls planRRT() then smoothPathPCHIP()
 // ---------------------------------------------------------------------------
+int main() {
+    Point start = {1, 1};
+    Point goal = {9, 9};
 
-void RRTPlanner::configure(
-  const rclcpp_lifecycle::LifecycleNode::WeakPtr & parent,
-  std::string name,
-  std::shared_ptr<tf2_ros::Buffer> tf,
-  std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
-{
-  (void)tf;
+    // 1) Run the RRT search + shortcutting -> raw/shortcut waypoint path
+    std::vector<Point> newPath = planRRT(start, goal);
 
-  node_ = parent;
-  name_ = name;
-  costmap_ros_ = costmap_ros;
+    std::cout << std::endl << "new path: ";
+    for (const auto& p : newPath) {
+        std::cout << "(" << p.x << "," << p.y << ") ";
+    }
+    std::cout << std::endl;
+
+    // Corner-rounding / bezier smoothing pass - computed for parity with the
+    // original script, though its result isn't the one used for the final
+    // printed/checked curve below (same as before the refactor).
+    std::vector<Point> smoothPathFinalBezier = smoothPathBezier(newPath, 0.5, 30);
+    (void)smoothPathFinalBezier;
+
+    // 2) Run the PCHIP smoothing pass -> final smooth curve
+    std::vector<Point> smoothPathFinal = smoothPathPCHIP(newPath);
+
+    bool smoothPathHasCollision = checkIfSmoothPathCollide(smoothPathFinal);
+    if (smoothPathHasCollision) {
+        std::cout << "smooth_path_final is NOT collision free" << std::endl;
+    } else {
+        std::cout << "smooth_path_final is collision free" << std::endl;
+    }
+
+    // Leftover unused sample data from the original script - renamed from
+    // `start` to `legacyUnusedPoints` to avoid clashing with the `start`
+    // Point above. Only fed the (now removed) matplotlib plotting.
+    std::vector<Point> legacyUnusedPoints = { {1, 1}, {2, 2}, {3, 2}, {4, 3} };
+    (void)legacyUnusedPoints;
+
+    double d = distanceFn(2, 3, 7, 6);
+    (void)d;
+
+    return 0;
 }
-
-void RRTPlanner::cleanup()
-{
-  costmap_ros_.reset();
-}
-
-void RRTPlanner::activate()
-{
-}
-
-void RRTPlanner::deactivate()
-{
-}
-
-// FIXED:
-//  - built `obstacles` from the live costmap instead of referencing an
-//    undefined variable
-//  - removed the duplicate `nav_msgs::msg::Path path;` declaration
-//  - completed the per-waypoint loop: sets a valid orientation, stamps each
-//    pose, and actually pushes it into path.poses (the original loop built
-//    a PoseStamped and then discarded it)
-nav_msgs::msg::Path RRTPlanner::createPlan(
-  const geometry_msgs::msg::PoseStamped & start,
-  const geometry_msgs::msg::PoseStamped & goal,
-  std::function<bool()> cancel_checker)
-{
-  (void)cancel_checker;
-
-  Point rrtStart = {
-    start.pose.position.x,
-    start.pose.position.y
-  };
-
-  Point rrtGoal = {
-    goal.pose.position.x,
-    goal.pose.position.y
-  };
-
-//   std::vector<Obstacle> obstacles = buildObstaclesFromCostmap(costmap_ros_);
-
-  std::vector<Point> rrtPath = planRRT(rrtStart, rrtGoal);
-
-  nav_msgs::msg::Path path; //path contains sequence of posestamped
-  path.header = start.header;
-
-  //convert rrt path into nav2 path message
-  for (const auto & point : rrtPath) {   //loop through each rrt point and create posestamped
-    geometry_msgs::msg::PoseStamped pose;
-    pose.header = start.header;
-    pose.pose.position.x = point.x;
-    pose.pose.position.y = point.y;
-    pose.pose.position.z = 0.0;
-    pose.pose.orientation.w = 1.0;   // identity orientation - no heading info from RRT itself
-    path.poses.push_back(pose);
-  }
-
-  return path;
-}
-
-}  // namespace rrt_nav2_planner
-
-#include "pluginlib/class_list_macros.hpp"
-PLUGINLIB_EXPORT_CLASS(rrt_nav2_planner::RRTPlanner, nav2_core::GlobalPlanner)
